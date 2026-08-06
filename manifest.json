@@ -1,0 +1,19 @@
+{
+  "id": "vrm_pokemon_bank",
+  "name": "Pokémon Bank",
+  "version": "1.2.0",
+  "api": 2,
+  "entry": "main.lua",
+  "profile": "content",
+  "category": "MECHANIC",
+  "game_version": ">=0.0.0-0 <2.0.0",
+  "priority": 100,
+  "affects_link": false,
+  "permissions": [
+    "engine_internals"
+  ],
+  "dependencies": [],
+  "optional_dependencies": [],
+  "conflicts": [],
+  "description": "A second, independent storage for Pokémon and items that lives outside any save file: deposit a Pokémon or item in one playthrough (any of Red/Blue/Yellow, any save slot) and withdraw it in another. HMs and key items can never be deposited. Exposes a full API (mod.exports) so other mods can deposit, withdraw, list and query the Bank's contents."
+}
