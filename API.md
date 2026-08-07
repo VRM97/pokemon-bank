@@ -27,6 +27,10 @@ Practically: don't cache a `{ box, index }` pair across a turn boundary, an even
 - `releasePokemon(boxNum, index)` -- removes it for good; returns whether anything was actually there to remove. No confirmation -- this mod's own UI asks first, but the exported call does not.
 - `listPokemon()` -- every stored mon, as a flat array of `{ box, index, mon }`.
 - `pokemonCount()` -- total Pokémon across every box.
+- `isValidPokemon(mon, game)` -- `true` when `mon.species` exists in `game.data.pokemon` and every move id in `mon.moves` exists in `game.data.moves`. Exported so other mods can reuse the same rule before depositing or when building their own Bank UI.
+- `validatePokemonStorage(game)` -- scans the valid box list and `invalidPokemon` bidirectionally: invalid mons in boxes move to `invalidPokemon`, mons in `invalidPokemon` that are now valid append to the end of the last box. Returns `{ changed, quarantined, restored }`. Does not mark the Bank dirty itself -- call `validateStorage` (below) if you want the combined pass plus dirty handling.
+- `listInvalidPokemon()` -- every quarantined mon as `{ index, mon }` (a copy of the list; mutating it does nothing to the Bank).
+- `invalidPokemonCount()` -- how many mons are in `invalidPokemon`.
 - `boxCount()` -- see **Box numbering** above.
 - `boxCapacity()` -- slots per box (currently 20; do not hardcode it).
 
@@ -36,13 +40,31 @@ Practically: don't cache a `{ box, index }` pair across a turn boundary, an even
 - `withdrawItem(id, qty)` -- decrements the Bank's own count only. Does **not** touch any bag -- add it to whatever inventory you mean with your own `Bag.add` first (check its return value before calling this, so a failed add doesn't still remove the item from the Bank -- mirrors what this mod's own UI does).
 - `itemCount(id)`
 - `listItems()` -- a plain `{ id = count }` table (a copy; mutating it does nothing to the Bank).
+- `isValidItem(id, game)` -- `true` when `id` is a non-empty string present in `game.data.items`. Exported for other mods.
+- `validateItemsStorage(game)` -- scans `items` and `invalidItems` bidirectionally: unknown ids move to `invalidItems`, ids that become known again merge back into `items`. Returns `{ changed, quarantined, restored }` (counts are total item quantities, not distinct ids).
+- `listInvalidItems()` -- a plain `{ id = count }` copy of the quarantined stacks.
+- `invalidItemCount(id)` -- total quarantined quantity for one id, or across every id when `id` is omitted.
 - `isBlacklisted(id, game)` -- true for HMs, key items (needs `game` to check the `keyItem` flag), and anything added through `blacklistItem`.
 - `blacklistItem(id)` -- adds `id` to the Bank's deposit blacklist, on top of the built-in HM/key-item rule. Additive only -- there is no way to lift the built-in rule for either. Lives only in memory: a mod that needs an id blacklisted calls this itself, every load (matches how `mod.options`/manifest declarations already work -- nothing here is a one-time registration that outlives the calling mod being loaded).
 
+## Money
+
+Same asymmetry as `depositItem`/`withdrawItem`: these only change the Bank's own balance. Neither touches `game.save.money` -- debit/credit whatever wallet you mean yourself (mirrors what this mod's own DEPOSIT MONEY/WITHDRAW MONEY do).
+
+- `bankMoney()` -- the Bank's own money balance, independent of any save's `game.save.money`.
+- `depositMoney(amount)` -- adds `amount` to the Bank's balance. Returns `true`, or `false, "bad request"` for an `amount <= 0`.
+- `withdrawMoney(amount)` -- subtracts `amount` from the Bank's balance. Returns `true`, or `false, "not enough"` for an `amount <= 0` or greater than `bankMoney()`.
+- `maxMoney` -- `999999`, the game's own money cap (`GenSave.lua`'s 3-byte BCD `O.money` field). Not enforced by `depositMoney`/`withdrawMoney` themselves (the Bank's own balance is a plain number, uncapped) -- only relevant if you're about to add the withdrawn amount to `game.save.money`, the same way this mod's own WITHDRAW MONEY caps itself against it first.
+
 ## Persistence
 
-Every export above that mutates the Bank (`depositPokemon`, `withdrawPokemon`, `movePokemon`, `releasePokemon`, `depositItem`, `withdrawItem`) only changes the in-memory copy -- the actual write to `storage.lua` is deferred to line up with the game's own save (a `save.write` hook), not flushed immediately. This is deliberate: see README.md's **Where the data lives** for why an immediate write would let a reset-without-saving duplicate whatever was just deposited. Nothing to do differently here -- just don't assume a mutation is durable the instant the call returns.
+Every export above that mutates the Bank (`depositPokemon`, `withdrawPokemon`, `movePokemon`, `releasePokemon`, `depositItem`, `withdrawItem`, `depositMoney`, `withdrawMoney`) only changes the in-memory copy -- the actual write to `storage.lua` is deferred to line up with the game's own save (a `save.write` hook), not flushed immediately. This is deliberate: see README.md's **Where the data lives** for why an immediate write would let a reset-without-saving duplicate whatever was just deposited. Nothing to do differently here -- just don't assume a mutation is durable the instant the call returns.
 
+On every `save.loaded`, this mod runs `validateStorage(game)` automatically (Pokémon + items) and shows a summary text box when anything moved. Other mods can call the validation exports directly at any time.
+
+`storage.lua` is **version 2**: `{ version, boxes, currentBox, items, money, invalidPokemon, invalidItems }`. Loading a version-1 file migrates it (adds empty `invalidPokemon`/`invalidItems`, bumps `version`) and marks the Bank dirty so the upgraded shape is written on the next save.
+
+- `validateStorage(game)` -- the combined pass this mod runs on load: calls `validatePokemonStorage` and `validateItemsStorage`, marks the Bank dirty when either reports `changed`, returns `{ changed, pokemon, items, message }` (`message` is a player-facing summary string, or `nil` when nothing moved).
 - `flush()` -- forces the pending write immediately instead of waiting for the next save. Returns whether anything was actually pending. Normally unnecessary; reach for it only when a mod has its own reason a Bank change must be durable before the game's own save point (e.g. right before code that risks the process, like a native file-picker call).
 
 ## PC menu entry
@@ -51,21 +73,24 @@ Pokémon Bank adds a **POKéMON BANK** row to the PC's own main menu (the one of
 
 - `setPcEntryEnabled(enabled)` -- pass `false` to hide the row outright regardless of the player's own **SHOW IN PC MENU** option, `true` (or call again) to restore it. Meant for a mod that replaces the PC flow entirely (the way `vrm_unified_pc_system` replaces Bill's/Player's PC) and wants to fold the Bank's entry point into its own UI instead of showing both.
 - `pcMenuLabel` -- the exact row label (`"POKéMON BANK"`), for a mod that would rather remove it itself with `mod.ui.removeLabel` inside its own `ui.pc.items` hook (registered with a higher `priority` than this mod's manifest `priority`, so it runs after -- see the engine's decorate-after-`next` hook convention). `setPcEntryEnabled` above is the simpler option for most cases; this is for a mod that wants to make that decision per-call (e.g. only inside its own replacement PC screen) rather than as a standing on/off switch.
-- `setPokemonTabEnabled(enabled)` / `setItemsTabEnabled(enabled)` -- same idea as `setPcEntryEnabled`, one level down: hide (`false`) or restore (`true`, or call again) just the POKéMON side or just the ITEMS side, independent of the player's own **SHOW POKéMON** / **SHOW ITEMS** options (each combines the same way `setPcEntryEnabled` and **SHOW IN PC MENU** already do -- both the option and the API flag have to allow a tab for it to show). With only one tab enabled (by either mechanism), the **POKéMON BANK** row skips the POKéMON/ITEMS chooser and opens that tab directly; with neither enabled, the row doesn't appear at all. Doesn't affect `open(game, tab)`, `pokemonScreenId` or `itemsScreenId` below -- those stay reachable regardless, the same way `open` already bypasses **SHOW IN PC MENU**/`setPcEntryEnabled`.
+- `setPokemonTabEnabled(enabled)` / `setItemsTabEnabled(enabled)` / `setMoneyTabEnabled(enabled)` -- same idea as `setPcEntryEnabled`, one level down: hide (`false`) or restore (`true`, or call again) just the POKéMON, ITEMS or MONEY side, independent of the player's own **SHOW POKéMON** / **SHOW ITEMS** / **SHOW MONEY** options (each combines the same way `setPcEntryEnabled` and **SHOW IN PC MENU** already do -- both the option and the API flag have to allow a tab for it to show). With only one tab enabled (by either mechanism), the **POKéMON BANK** row skips the chooser and opens that tab directly; with none enabled, the row doesn't appear at all. Doesn't affect `open(game, tab)`, `pokemonScreenId`, `itemsScreenId` or `moneyScreenId` below -- those stay reachable regardless, the same way `open` already bypasses **SHOW IN PC MENU**/`setPcEntryEnabled`.
+- `isPcEntryEnabled()` / `isPokemonTabEnabled()` / `isItemsTabEnabled()` / `isMoneyTabEnabled()` -- the read side of the four setters above. The player's own **SHOW IN PC MENU** / **SHOW POKéMON** / **SHOW ITEMS** / **SHOW MONEY** options live inside this mod's `mod.options`, which `mod.find()` does not expose (it only hands back `{ id, version, exports }`) -- these are the only way for another mod to know whether a side is actually visible right now. Each returns the already-combined result (the player's option **and** whatever any mod's setter above last chose), the same value the **POKéMON BANK** PC row itself decides with.
 
 ## UI
 
-- `open(game, tab)` -- pushes the Bank UI directly, no PC required; `tab` is `"pokemon"` (default) or `"items"`. Returns whatever `mod.ui.push` returns, or `nil, "no game"` without one.
-- `pokemonScreenId`, `itemsScreenId` -- the registered screen ids (`mod.content.screens`) backing the two tabs, for a mod that wants to push them through its own navigation instead of `open`.
+- `open(game, tab)` -- pushes the Bank UI directly, no PC required; `tab` is `"pokemon"` (default), `"items"` or `"money"`. Returns whatever `mod.ui.push` returns, or `nil, "no game"` without one.
+- `pokemonScreenId`, `itemsScreenId`, `moneyScreenId` -- the registered screen ids (`mod.content.screens`) backing the three tabs, for a mod that wants to push them through its own navigation instead of `open`.
 
 ## Events
 
-Every deposit, withdraw, release and item transfer -- through this mod's own UI or through the exports above -- fires one of:
+Every deposit, withdraw, release and item/money transfer -- through this mod's own UI or through the exports above -- fires one of:
 
 - `mod.vrm_pokemon_bank.pokemon_deposited` -- `{ box, index, mon }`
 - `mod.vrm_pokemon_bank.pokemon_withdrawn` -- `{ box, index, mon }`
 - `mod.vrm_pokemon_bank.pokemon_released` -- `{ box, index, mon }`
 - `mod.vrm_pokemon_bank.item_deposited` -- `{ id, qty }`
 - `mod.vrm_pokemon_bank.item_withdrawn` -- `{ id, qty }`
+- `mod.vrm_pokemon_bank.money_deposited` -- `{ amount }`
+- `mod.vrm_pokemon_bank.money_withdrawn` -- `{ amount }`
 
 `mod.events:on("mod.vrm_pokemon_bank.pokemon_deposited", function(payload) ... end)` subscribes the usual way. Remember `box`/`index` in a payload are only a snapshot -- see **Box numbering** above.

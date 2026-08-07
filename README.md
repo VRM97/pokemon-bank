@@ -1,28 +1,31 @@
 # Pokémon Bank
 
-A second storage for Pokémon and items that lives **outside every save file**. Deposit a Pokémon or an item while playing one save -- any of Red, Blue or Yellow, any slot -- and withdraw it while playing a completely different one. The Bank is its own file, so New Game, deleting a save slot or switching versions never touches it.
+A second storage for Pokémon, items and money that lives **outside every gen1recomp save file**. Deposit a Pokémon, an item or money while playing one save -- any of Red, Blue or Yellow, any slot -- and withdraw it while playing a completely different one. The Bank is its own file, so New Game, deleting a save slot or switching versions never touches it.
 
 ## How to use it
 
-Open any PC and select **POKéMON BANK**, a new row this mod adds right below your own item-storage PC. Two options:
-- **POKéMON** opens a menu of its own:
-  - **WITHDRAW <PK><MN>** lists the current box's Pokémon by name and level; picking one offers WITHDRAW (sends it to your party) or STATS.
-  - **DEPOSIT <PK><MN>** lists your party the same way; picking one offers DEPOSIT (your last Pokémon can't be deposited) or STATS.
+Open any Pokémon Center PC and select **POKéMON BANK**. Three options:
+- **POKéMON**:
+  - **WITHDRAW PKMN** lists the current box's Pokémon by name and level; picking one offers WITHDRAW (sends it to your party) or STATS.
+  - **DEPOSIT PKMN** lists your party the same way; picking one offers DEPOSIT (your last Pokémon can't be deposited) or STATS.
   - **RELEASE** lists the current box, asks to confirm, then it's gone for good.
   - **CHANGE BOX** lists every box with its Pokémon count (`*` marks the current one) -- see **How many boxes** below for how many there are.
   - There is no MOVE/reorder option here -- withdraw and re-deposit to reorganize, or see `movePokemon` in [API.md](./API.md) for a programmatic way.
-- **ITEMS** opens a menu of its own too:
+- **ITEMS**:
   - **WITHDRAW ITEM** lists the Bank's items (sorted alphabetically); picking one asks a quantity and adds it to your Bag (refused if your Bag has no room).
   - **DEPOSIT ITEM** lists your Bag's items the same way; picking one asks a quantity and stores it (refused up front for HMs and key items -- see **What can't be deposited** below).
   - Neither list closes after a transfer -- the row updates in place and the result shows at the bottom, so you can move several items in one visit, exactly like the vanilla PC does.
+- **MONEY**:
+  - **DEPOSIT MONEY** and **WITHDRAW MONEY** each open an amount box showing your own MONEY and the Bank's BANK balance above it: Up/Down change the amount by 1 (wrapping at 1/max), Left/Right by 100 (capped, not wrapping), START jumps straight to the max, A confirms, B cancels.
+  - Depositing is capped by how much money you're carrying; withdrawing is capped by both the Bank's own balance and how much room is left before your money would hit the game's own ¥999999 cap.
 
 Withdrawing into a full party, or depositing your Bag's last non-key item stack it needs a slot for, behaves the same way the vanilla PC/Bag do: you're told, nothing is lost.
 
-**Withdrawing catches it in your Pokédex** if it wasn't already seen/owned there -- the same way evolving one does. Depositing, releasing and moving Pokémon within the Bank never touch the Pokédex; only taking one out (to your party, or straight to a PC box through another mod's Bank integration) does.
+**Withdrawing register it in your Pokédex** if it wasn't already seen/owned there -- the same way evolving one does. Depositing, releasing and moving Pokémon within the Bank never touch the Pokédex; only taking one out (to your party, or straight to a PC box through another mod's Bank integration) does.
 
 Set **SHOW IN PC MENU** option to off (on by default) hides the row if you'd rather not see it; another mod can also hide it outright -- see [API.md](./API.md).
 
-**SHOW POKéMON** and **SHOW ITEMS** (both on by default) let you turn off either side independently. With both on, the row opens the POKéMON/ITEMS chooser as above. With only one on, the row skips the chooser and opens that side directly. With both off, the row doesn't appear at all, same as turning off **SHOW IN PC MENU**. A mod can also hide either side outright, on top of these options -- see [API.md](./API.md).
+**POKéMON MENU**, **ITEMS MENU** and **MONEY MENU** (all on by default) let you turn off any side independently. With two or more on, the row opens a chooser listing just the enabled ones, as above. With only one on, the row skips the chooser and opens that side directly. With all off, the row doesn't appear at all, same as turning off **SHOW IN PC MENU**. A mod can also hide any side outright, on top of these options -- see [API.md](./API.md).
 
 ## How many boxes
 
@@ -37,6 +40,8 @@ Set **SHOW IN PC MENU** option to off (on by default) hides the row if you'd rat
 One file, `bank/storage.lua`, written next to `saves/` and `options.lua` in a portable install, or in the OS save directory otherwise -- the same place/rule the game's own saves and options follow (see  `SaveData.portableFs()`). It is never written into, or read from, `save.modData`, so no save slot carries a copy of it and no save can overwrite it.
 
 **It's written on the same schedule as your save file.** A Bank transaction only changes things in memory; the actual write to `storage.lua` happens alongside the next time the game itself saves (a manual SAVE, an autosave mod, anything that reaches `Game:writeSave`). This is deliberate: if the Bank wrote immediately, resetting without saving after a deposit would leave you with the Pokémon both in the Bank *and* back in your unsaved party -- free duplication. Waiting for the same save point the game already uses means a reset always reverts both together, so nothing can be duplicated or lost that way. Before writing, the previous `storage.lua` rolls into `storage.lua.bak` and the new one stages as `storage.lua.tmp` before the swap -- the same backup-and-staged-write discipline the game's own save files use -- so a crash mid-write leaves a recoverable copy instead of a half-written file.
+
+**After you load a save**, the Bank checks every stored Pokémon and item against the active game's data. A Pokémon whose species or any move is unknown is set aside in an internal invalid list (not shown in the normal WITHDRAW lists); an item whose id is unknown is set aside the same way. If something that was invalid becomes valid again -- because you installed the mod that defines it, or switched to a version that includes it -- it is moved back automatically (Pokémon go to the end of the last box). You get a short summary message when anything moved.
 
 ## For mod authors
 
