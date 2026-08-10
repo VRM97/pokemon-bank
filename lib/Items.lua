@@ -78,15 +78,24 @@ function Module.install(mod, core)
       and data.items[id] ~= nil
   end
 
+  local function ensureOrphaned(s)
+    if not s.orphaned then
+      s.orphaned = { mons = {}, items = {} }
+    end
+    s.orphaned.mons = s.orphaned.mons or {}
+    s.orphaned.items = s.orphaned.items or {}
+    return s.orphaned
+  end
+
   local function validateStorage(game)
     local data = game and game.data
     if not data then
-      return { changed = false, quarantined = 0, restored = 0 }
+      return { changed = false, quarantined = 0, restored = 0, lostItems = {}, restoredItems = {} }
     end
     local s = loadStorage()
-    s.invalidItems = type(s.invalidItems) == "table" and s.invalidItems or {}
+    local orphaned = ensureOrphaned(s)
     local quarantined, restored = 0, 0
-
+    local lostItems, restoredItems = {}, {}
     local badIds = {}
     for id, count in pairs(s.items) do
       if not isValidItem(id, data) then badIds[#badIds + 1] = id end
@@ -95,41 +104,47 @@ function Module.install(mod, core)
       local qty = s.items[id] or 0
       if qty > 0 then
         s.items[id] = nil
-        s.invalidItems[id] = (s.invalidItems[id] or 0) + qty
+        orphaned.items[id] = (orphaned.items[id] or 0) + qty
         quarantined = quarantined + qty
+        lostItems[#lostItems + 1] = { id = id, count = qty, from = "POKéMON BANK" }
       end
     end
-
     local goodIds = {}
-    for id, count in pairs(s.invalidItems) do
+    for id, count in pairs(orphaned.items) do
       if isValidItem(id, data) then goodIds[#goodIds + 1] = id end
     end
     for _, id in ipairs(goodIds) do
-      local qty = s.invalidItems[id] or 0
+      local qty = orphaned.items[id] or 0
       if qty > 0 then
-        s.invalidItems[id] = nil
+        orphaned.items[id] = nil
         s.items[id] = (s.items[id] or 0) + qty
         restored = restored + qty
+        restoredItems[#restoredItems + 1] = { id = id, count = qty }
       end
     end
-
     return {
       changed = quarantined > 0 or restored > 0,
       quarantined = quarantined,
       restored = restored,
+      lostItems = lostItems,
+      restoredItems = restoredItems,
     }
   end
 
   local function listInvalidItems()
     local out = {}
-    for id, count in pairs(loadStorage().invalidItems) do out[id] = count end
+    local s = loadStorage()
+    local orphaned = s.orphaned and s.orphaned.items or {}
+    for id, count in pairs(orphaned) do out[id] = count end
     return out
   end
 
   local function invalidItemCount(id)
-    if id ~= nil then return loadStorage().invalidItems[id] or 0 end
+    local s = loadStorage()
+    local orphaned = s.orphaned and s.orphaned.items or {}
+    if id ~= nil then return orphaned[id] or 0 end
     local n = 0
-    for _, count in pairs(loadStorage().invalidItems) do n = n + count end
+    for _, count in pairs(orphaned) do n = n + count end
     return n
   end
 

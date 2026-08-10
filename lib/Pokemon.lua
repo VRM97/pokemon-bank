@@ -66,21 +66,6 @@ function Module.install(mod, core)
     return nil
   end
 
-  -- Restored invalid Pokémon land at the tail of the last box (the spare box normalizeBoxes always keeps last).
-  local function appendMonToLastBox(mon)
-    if type(mon) ~= "table" then return false end
-    local s = loadStorage()
-    normalizeBoxes(s)
-    local box = s.boxes[#s.boxes]
-    if #box >= BOX_CAPACITY then
-      s.boxes[#s.boxes + 1] = {}
-      box = s.boxes[#s.boxes]
-    end
-    table.insert(box, mon)
-    normalizeBoxes(s)
-    return true
-  end
-
   local function moveId(mv)
     return type(mv) == "table" and mv.id or mv
   end
@@ -100,54 +85,78 @@ function Module.install(mod, core)
     return true
   end
 
+  local function ensureOrphaned(s)
+    if not s.orphaned then
+      s.orphaned = { mons = {}, items = {} }
+    end
+    s.orphaned.mons = s.orphaned.mons or {}
+    s.orphaned.items = s.orphaned.items or {}
+    return s.orphaned
+  end
+
   local function validateStorage(game)
     local data = game and game.data
     if not data then
-      return { changed = false, quarantined = 0, restored = 0 }
+      return { changed = false, quarantined = 0, restored = 0, lostMons = {}, restoredMons = {} }
     end
     local s = loadStorage()
-    s.invalidPokemon = type(s.invalidPokemon) == "table" and s.invalidPokemon or {}
+    local orphaned = ensureOrphaned(s)
     local quarantined, restored = 0, 0
-
+    local lostMons, restoredMons = {}, {}
     for boxNum = 1, #s.boxes do
       local box = s.boxes[boxNum]
       for idx = #box, 1, -1 do
         local mon = box[idx]
         if not isValidPokemon(mon, data) then
           table.remove(box, idx)
-          s.invalidPokemon[#s.invalidPokemon + 1] = mon
+          orphaned.mons[#orphaned.mons + 1] = mon
           quarantined = quarantined + 1
+          lostMons[#lostMons + 1] = { species = mon.species, from = "BOX " .. boxNum }
         end
       end
     end
-
-    for idx = #s.invalidPokemon, 1, -1 do
-      local mon = s.invalidPokemon[idx]
+    normalizeBoxes(s)
+    local targetBoxNum = #s.boxes
+    local targetBox = s.boxes[targetBoxNum]
+    for idx = #orphaned.mons, 1, -1 do
+      local mon = orphaned.mons[idx]
       if isValidPokemon(mon, data) then
-        table.remove(s.invalidPokemon, idx)
-        appendMonToLastBox(mon)
+        table.remove(orphaned.mons, idx)
+        -- Find space in current target box or create new if needed
+        if #targetBox >= BOX_CAPACITY then
+          s.boxes[#s.boxes + 1] = {}
+          targetBoxNum = #s.boxes
+          targetBox = s.boxes[targetBoxNum]
+        end
+        table.insert(targetBox, mon)
         restored = restored + 1
+        restoredMons[#restoredMons + 1] = { species = mon.species, box = targetBoxNum }
       end
     end
-
     normalizeBoxes(s)
     return {
       changed = quarantined > 0 or restored > 0,
       quarantined = quarantined,
       restored = restored,
+      lostMons = lostMons,
+      restoredMons = restoredMons,
     }
   end
 
   local function listInvalidMons()
     local out = {}
-    for idx, mon in ipairs(loadStorage().invalidPokemon) do
+    local s = loadStorage()
+    local orphaned = s.orphaned and s.orphaned.mons or {}
+    for idx, mon in ipairs(orphaned) do
       out[#out + 1] = { index = idx, mon = mon }
     end
     return out
   end
 
   local function invalidMonCount()
-    return #loadStorage().invalidPokemon
+    local s = loadStorage()
+    local orphaned = s.orphaned and s.orphaned.mons or {}
+    return #orphaned
   end
 
   local function withdrawMon(boxNum, idx)

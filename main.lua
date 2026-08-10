@@ -54,7 +54,7 @@ return function(mod)
     return decoded
   end
 
-  local STORAGE_VERSION = 2
+  local STORAGE_VERSION = 3
 
   local function freshStorage()
     return {
@@ -62,9 +62,7 @@ return function(mod)
       boxes = { {} },
       currentBox = 1,
       items = {},
-      money = 0,
-      invalidPokemon = {},
-      invalidItems = {},
+      money = 0
     }
   end
 
@@ -82,23 +80,60 @@ return function(mod)
     s.currentBox = math.max(1, math.min(#s.boxes, math.floor(tonumber(s.currentBox) or 1)))
     s.items = type(s.items) == "table" and s.items or {}
     s.money = math.max(0, math.floor(tonumber(s.money) or 0))
-    s.invalidPokemon = type(s.invalidPokemon) == "table" and s.invalidPokemon or {}
-    s.invalidItems = type(s.invalidItems) == "table" and s.invalidItems or {}
-    for id, count in pairs(s.invalidItems) do
-      if not count or count <= 0 then s.invalidItems[id] = nil end
+    
+    -- Handle orphaned structure
+    local orphaned = s.orphaned
+    if orphaned then
+      orphaned.mons = type(orphaned.mons) == "table" and orphaned.mons or {}
+      orphaned.items = type(orphaned.items) == "table" and orphaned.items or {}
+      for id, count in pairs(orphaned.items) do
+        if not count or count <= 0 then orphaned.items[id] = nil end
+      end
+      -- Remove orphaned if empty (mirrors SaveData behavior)
+      if #orphaned.mons == 0 and next(orphaned.items) == nil then
+        s.orphaned = nil
+      end
     end
   end
 
   local function migrateStorage(s)
-    if (tonumber(s.version) or 1) >= STORAGE_VERSION then return false end
+    local currentVersion = tonumber(s.version) or 1
+    if currentVersion >= STORAGE_VERSION then return false end
+    -- Migrate from version 2 to 3: invalidPokemon/invalidItems -> orphaned
+    if currentVersion < 3 then
+      local orphaned = { mons = {}, items = {} }
+      if type(s.invalidPokemon) == "table" then
+        for _, mon in ipairs(s.invalidPokemon) do
+          if type(mon) == "table" then
+            orphaned.mons[#orphaned.mons + 1] = mon
+          end
+        end
+        s.invalidPokemon = nil
+      end
+      if type(s.invalidItems) == "table" then
+        for id, count in pairs(s.invalidItems) do
+          if count and count > 0 then
+            orphaned.items[id] = count
+          end
+        end
+        s.invalidItems = nil
+      end
+      -- Only set orphaned if it has content
+      if #orphaned.mons > 0 or next(orphaned.items) ~= nil then
+        s.orphaned = orphaned
+      end
+    end
     s.version = STORAGE_VERSION
-    s.invalidPokemon = type(s.invalidPokemon) == "table" and s.invalidPokemon or {}
-    s.invalidItems = type(s.invalidItems) == "table" and s.invalidItems or {}
     return true
   end
 
   local storage -- in-memory cache; loaded lazily on first touch
   local dirty = false -- true when storage has mutations not yet flushed to disk
+
+  -- Every mutator calls this instead of writing to disk directly.
+  local function markDirty()
+    dirty = true
+  end
 
   -- Mirrors SaveData.load's own recovery order (source/src/core/SaveData.lua):
   -- the main file wins; a missing or corrupt one (e.g. the process died mid-write) falls back to the .tmp staging witness, then the rolling .bak. A recovered copy is only promoted back to the main filename the next time something actually flushes, not eagerly here.
@@ -111,13 +146,8 @@ return function(mod)
     local migrated = migrateStorage(out)
     normalizeBoxes(out)
     storage = out
-    if migrated then dirty = true end
+    if migrated then markDirty() end
     return storage
-  end
-
-  -- Every mutator calls this instead of writing to disk directly -- see README.md's Where the data lives for why the actual write waits for the game's own save.
-  local function markDirty()
-    dirty = true
   end
 
   -- The actual disk write, only ever called from the save.write hook below (never after a single deposit/withdraw). Mirrors SaveData.save's own backup-then-tmp-witness-then-swap discipline (see README.md's Where the data lives).
@@ -188,33 +218,7 @@ return function(mod)
   local Items = V.require("Items").install(mod, core)
   local Money = V.require("Money").install(mod, core)
 
-  local TextBox = require("src.render.TextBox")
-
-  local function formatValidationMessage(poke, items)
-    local parts = {}
-    if poke.quarantined > 0 then
-      parts[#parts + 1] = poke.quarantined == 1
-        and "1 POKéMON was\nset aside."
-        or ("%d POKéMON were\nset aside."):format(poke.quarantined)
-    end
-    if poke.restored > 0 then
-      parts[#parts + 1] = poke.restored == 1
-        and "1 POKéMON was\nrestored."
-        or ("%d POKéMON were\nrestored."):format(poke.restored)
-    end
-    if items.quarantined > 0 then
-      parts[#parts + 1] = items.quarantined == 1
-        and "1 item was\nset aside."
-        or ("%d items were\nset aside."):format(items.quarantined)
-    end
-    if items.restored > 0 then
-      parts[#parts + 1] = items.restored == 1
-        and "1 item was\nrestored."
-        or ("%d items were\nrestored."):format(items.restored)
-    end
-    if #parts == 0 then return nil end
-    return "POKéMON BANK\nchecked stored data.\f\f" .. table.concat(parts, "\f")
-  end
+  local QuarantineReport = require("src.ui.QuarantineReport")
 
   local function validateBankStorage(game)
     if not (game and game.data) then return nil end
@@ -227,7 +231,12 @@ return function(mod)
       changed = changed,
       pokemon = poke,
       items = items,
-      message = formatValidationMessage(poke, items),
+      report = {
+        lostMons = poke.lostMons or {},
+        lostItems = items.lostItems or {},
+        restoredMons = poke.restoredMons or {},
+        restoredItems = items.restoredItems or {}
+      }
     }
   end
 
@@ -242,8 +251,8 @@ return function(mod)
     local game = liveGame
     if not game then return end
     local result = validateBankStorage(game)
-    if result and result.message then
-      game.stack:push(TextBox.new(game, result.message))
+    if result and result.report and result.changed then
+      game.stack:push(QuarantineReport.new(game, result.report))
     end
   end)
 
