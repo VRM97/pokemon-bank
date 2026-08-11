@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.7.0
+
+New **MOVE PKMN** option under POKéMON: a single browsable view of the Bank, the party and a PC box in place of a plain list. SELECT cycles between the three (BANK > PARTY > PC); Left/Right flips through boxes. Picking a Pokémon opens TO BANK/PARTY/PC (whichever two storages aren't the one currently shown), SWITCH (swap it with another Pokémon in that same storage, navigating boxes to reach the target), STATS and RELEASE. TO BANK/PARTY/PC reuse the bulk transfer exports below for the Bank side; direct PARTY <-> PC moves stay internal to this screen, matching the vanilla PC's own party/box rules (party never drops below one, box capacity 20).
+
+New **TRANSFER BOX** option under POKéMON: a two-step box picker. Press A on a non-empty box locks it in as the source and switches to the other storage (a Bank box picked first shows the PC next, and vice versa); A again asks to confirm, then moves every Pokémon in the source box to the one on screen, overflowing into the following boxes if it doesn't all fit in one.
+
+New bulk transfer exports: `depositPartyPokemon(game, opts)` and `depositBoxPokemon(game, pcBoxNum, opts)` move several Pokémon from the party or a PC box into the Bank at once; `withdrawToParty(game, opts)` and `withdrawToBox(game, targetPcBoxNum, opts)` move several Bank Pokémon out to the party or a PC box at once (both fill the target box then overflow into the next ones with room). All four default to sensible index sets (party keeps its first Pokémon, PC/Bank box transfers default to everything) -- see API.md for the full reference. TRANSFER BOX and MOVE PKMN's TO BANK/TO PC options are built on top of these.
+
+New **MOVE ITEM** option under ITEMS: the same idea as MOVE PKMN but for the three item storages -- SELECT cycles BANK > BAG > PC, with the same top-right `{cursor}/{total}` counter MOVE PKMN shows. Picking an item opens TO BANK/BAG/PC (whichever two aren't the one currently shown), SWITCH (BAG only -- reorders it like the real Bag menu; shown in acquisition order instead of alphabetically so the reorder is actually visible, unlike every other list here) and TOSS, which works in all three storages here (unlike the standalone TOSS ITEM below, which stays Bank-only) -- the Bag and PC sides refuse an HM/key item first, same as their own vanilla TOSS.
+
+New **TOSS ITEM** option under ITEMS: lists the Bank's own items and permanently deletes a chosen quantity after confirming, mirroring the vanilla PC's own item toss. New export `tossItem(id, qty)` -- same storage effect as `withdrawItem`, but fires `item_tossed` instead of `item_withdrawn` so a listener can tell "left for a bag" apart from "discarded" (mirrors `releasePokemon` vs `withdrawPokemon`).
+
+New **SHOW FIRST IN PC MENU** option (off by default): moves the **POKéMON BANK** row to the very top of the PC menu.
+
 ## 1.6.0
 
 Replaced the custom `invalidPokemon`/`invalidItems` quarantine system with the game's native `orphaned` structure for parity with base game behavior. Storage schema bumped to **version 3** (`orphaned.mons`, `orphaned.items`); upgrading from version 2 automatically migrates existing quarantined data. The validation report now uses the game's `QuarantineReport` UI instead of a custom text box, showing detailed information about which Pokémon/items were moved to the LOST box and which were restored. The `orphaned` structure is automatically removed when empty, matching SaveData's cleanup behavior.

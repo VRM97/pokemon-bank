@@ -7,6 +7,7 @@ local PC_MENU_LABEL = "POKéMON BANK"
 return function(mod)
   mod.options:define({
     { key = "pc_menu_entry", label = "SHOW IN PC MENU", type = "toggle", default = true },
+    { key = "pc_menu_first", label = "SHOW FIRST IN PC MENU", type = "toggle", default = false },
     { key = "show_pokemon_tab", label = "POKéMON MENU", type = "toggle", default = true },
     { key = "show_items_tab", label = "ITEMS MENU", type = "toggle", default = true },
     { key = "show_money_tab", label = "MONEY MENU", type = "toggle", default = true },
@@ -288,11 +289,16 @@ return function(mod)
     -- Nothing to open with every tab off -- drop the row instead of showing an empty chooser (or a chooser with nothing behind it).
     if not (Pokemon.tabEnabled() or Items.tabEnabled() or Money.tabEnabled()) then return out end
     -- keepOpen mirrors every other row already on this menu, so B in the chooser above returns to the PC menu instead of logging off.
-    return mod.ui.insertBefore(out, "PROF.OAK's PC", {
+    local row = {
       label = PC_MENU_LABEL,
       keepOpen = true,
       onSelect = function() openBankMenu(game) end,
-    })
+    }
+    if mod.options:get("pc_menu_first") == true then
+      table.insert(out, 1, row)
+      return out
+    end
+    return mod.ui.insertBefore(out, "PROF.OAK's PC", row)
   end)
 
   mod.exports.open = function(game, tab)

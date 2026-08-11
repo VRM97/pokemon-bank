@@ -20,7 +20,11 @@ Practically: don't cache a `{ box, index }` pair across a turn boundary, an even
 ## Pokémon
 
 - `depositPokemon(mon, opts)` -- `opts.game`, if given, freezes the mon's stats block before storage (recommended; mirrors what this mod's own UI does before every deposit). Never refuses -- there is no box limit. Returns `boxNum, slotIndex`, or `nil, "invalid pokemon"` for a malformed `mon`.
+- `depositPartyPokemon(game, opts)` -- bulk deposit from the player's party to the Bank. `game` is required. `opts.boxNum` specifies the target Bank box (defaults to the last box, which is always empty). `opts.indices` is an array of party indices to deposit (defaults to `2..last`, keeping the first Pokémon). Returns an array of `{ box, index, mon }` for each deposited mon, or `nil, "error message"`. Ensures at least one Pokémon remains in the party. When a box fills, remaining mons continue to the next box.
+- `depositBoxPokemon(game, pcBoxNum, opts)` -- bulk deposit from a PC box to the Bank. `game` is required. `pcBoxNum` is the source PC box number (1-12). `opts.boxNum` specifies the target Bank box (defaults to the last box). `opts.indices` is an array of PC box slot indices to deposit (defaults to all). Returns an array of `{ box, index, mon }` for each deposited mon, or `nil, "error message"`. When a box fills, remaining mons continue to the next box.
 - `withdrawPokemon(boxNum, index, game)` -- removes and returns the mon table, or `nil` if that slot is empty (see box-numbering caveat above). `game` is optional but strongly recommended: when given, catches the mon in the Pokédex (`seen` + `owned`) if it wasn't already -- withdrawing is the only Bank action that can land a mon somewhere new (the party or a PC box), so it's the one that can introduce a species the Pokédex hasn't recorded yet. Without `game`, the withdrawal still happens; only the Pokédex write is skipped.
+- `withdrawToParty(game, opts)` -- bulk withdraw from the Bank to the player's party. `game` is required. `opts.boxNum` specifies the source Bank box (defaults to the first non-empty box). `opts.indices` is an array of Bank slot indices to withdraw (defaults to all). Returns `{ withdrawn = [array of { mon }], remaining = count }`, or `nil, "error message"`. Withdraws up to the party's capacity (6 total); any remaining mons stay in the Bank.
+- `withdrawToBox(game, targetPcBoxNum, opts)` -- bulk withdraw from the Bank to a PC box. `game` is required. `targetPcBoxNum` is the destination PC box number (1-12). `opts.boxNum` specifies the source Bank box (defaults to the first non-empty box). `opts.indices` is an array of Bank slot indices to withdraw (defaults to all). Returns `{ withdrawn = [array of { mon, pcBox }], remaining = count }`, or `nil, "error message"`. Fills the target box first, then overflows to subsequent PC boxes. If all PC boxes are full, remaining mons stay in the Bank.
 - `getPokemon(boxNum, index)` -- read-only peek; does not remove.
 - `getBox(boxNum)` -- a snapshot copy of one box's slots, indexed `1..boxCapacity()` (`nil` for an empty slot), for a mod that wants to render the Bank as a grid instead of walking `listPokemon()` itself. A copy, not a live reference -- mutating it does nothing to the Bank; call it again after any mutation to see the result. `nil` for a `boxNum` outside `1..boxCount()`.
 - `movePokemon(srcBox, srcIdx, destBox, destIdx)` -- relocates within the Bank; landing on an occupied slot swaps the two, landing on an empty slot appends to the destination box (same "all empty grid cells are equivalent, boxes are dense arrays" convention the vanilla PC uses). Returns `true`, or `false` (`"full"` if the 20-slot destination box is at capacity).
@@ -38,6 +42,7 @@ Practically: don't cache a `{ box, index }` pair across a turn boundary, an even
 
 - `depositItem(id, qty, game)` -- `game` is optional but strongly recommended: without it, only the `HM_` id prefix and anything added through `blacklistItem` are checked -- no `game.data.items` lookup means the `keyItem` flag can't be. Returns `true`, or `false, "blacklisted"/"bad request"`.
 - `withdrawItem(id, qty)` -- decrements the Bank's own count only. Does **not** touch any bag -- add it to whatever inventory you mean with your own `Bag.add` first (check its return value before calling this, so a failed add doesn't still remove the item from the Bank -- mirrors what this mod's own UI does).
+- `tossItem(id, qty)` -- same effect as `withdrawItem` (decrements the Bank's own count), for when the item is meant to just disappear rather than land in a bag -- fires `item_tossed` instead of `item_withdrawn` so a listener can tell the two apart. Returns `true`, or `false, "not enough"`.
 - `itemCount(id)`
 - `listItems()` -- a plain `{ id = count }` table (a copy; mutating it does nothing to the Bank).
 - `isValidItem(id, game)` -- `true` when `id` is a non-empty string present in `game.data.items`. Exported for other mods.
@@ -90,6 +95,7 @@ Every deposit, withdraw, release and item/money transfer -- through this mod's o
 - `mod.vrm_pokemon_bank.pokemon_released` -- `{ box, index, mon }`
 - `mod.vrm_pokemon_bank.item_deposited` -- `{ id, qty }`
 - `mod.vrm_pokemon_bank.item_withdrawn` -- `{ id, qty }`
+- `mod.vrm_pokemon_bank.item_tossed` -- `{ id, qty }`
 - `mod.vrm_pokemon_bank.money_deposited` -- `{ amount }`
 - `mod.vrm_pokemon_bank.money_withdrawn` -- `{ amount }`
 
