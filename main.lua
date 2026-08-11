@@ -208,11 +208,53 @@ return function(mod)
     return value
   end
 
+  -- Gen1 Modern UI reads a live ListMenu's index/scroll fields directly (see
+  -- registerModernUiAdapter below) instead of faking D-pad presses, but the
+  -- clamp-then-resync-scroll math is private to src/ui/ListMenu.lua
+  -- (moveIndex/syncScroll are local there). Mirrored here so a touch/mouse
+  -- action can move a live list's cursor exactly the same way a real D-pad
+  -- press would, without a copy of this logic in every lib/ module.
+  local function syncListScroll(list)
+    local rows = list.rows or 7
+    if list.index - list.scroll > rows then list.scroll = list.index - rows end
+    if list.index - list.scroll < 1 then list.scroll = list.index - 1 end
+  end
+
+  local function moveListCursor(list, delta)
+    local n = list.items and #list.items or 0
+    if n == 0 then return end
+    list.index = math.max(1, math.min(n, (list.index or 1) + delta))
+    syncListScroll(list)
+  end
+
+  local function setListCursor(list, index)
+    local n = list.items and #list.items or 0
+    if n == 0 or index == nil then return end
+    list.index = math.max(1, math.min(n, math.floor(tonumber(index) or list.index)))
+    syncListScroll(list)
+  end
+
+  -- Gen1 Modern UI's row renderer reads a row's right-hand text off `value`,
+  -- while every ListMenu row here carries it as `right` (`value` is already
+  -- taken -- an internal id/index the row's onChoose needs, not display
+  -- text). Remap per row instead of passing `list.items` straight through,
+  -- or ids like an item's own id would print in place of its "x5" count.
+  local function publicRows(list)
+    local out = {}
+    for i, row in ipairs(list.items) do
+      out[i] = { label = row.label, value = row.right }
+    end
+    return out
+  end
+
   -- Handed to each tab's install(mod, core) instead of package-level locals, since none of loadStorage/markDirty/normalizeBoxes are reachable through require() from inside a lib/ module.
   local core = {
     loadStorage = loadStorage,
     markDirty = markDirty,
     normalizeBoxes = normalizeBoxes,
+    moveListCursor = moveListCursor,
+    setListCursor = setListCursor,
+    publicRows = publicRows,
   }
 
   local Pokemon = V.require("Pokemon").install(mod, core)
@@ -242,6 +284,68 @@ return function(mod)
   end
 
   mod.exports.validateStorage = validateBankStorage
+
+  -- =========================================================================
+  -- Gen1 Modern UI compatibility (optional, soft dependency)
+  -- =========================================================================
+  local function externalScreen(id, capabilities)
+    local actions = {}
+    for _, name in ipairs(capabilities) do
+      actions[name] = function(_, state, payload)
+        local surface = state.gen1ModernUi
+        local fn = surface and surface[name]
+        if type(fn) ~= "function" then return false end
+        fn(payload)
+        return true
+      end
+    end
+    return {
+      canSuppressNative = true,
+      match = function(state)
+        return type(state) == "table" and state.screenId == id
+          and type(state.gen1ModernUi) == "table"
+      end,
+      model = function(_, state)
+        local surface = state.gen1ModernUi
+        return {
+          title = surface.title(),
+          rows = surface.rows(),
+          index = surface.index(),
+          scroll = surface.scroll(),
+          footer = surface.footer(),
+        }
+      end,
+      actions = actions,
+    }
+  end
+
+  mod.exports.gen1ModernUi = {
+    apiVersion = 1,
+    screens = {
+      [Pokemon.transferBoxScreenId] = externalScreen(Pokemon.transferBoxScreenId,
+        { "up", "down", "left", "right", "select", "back", "start", "hover" }),
+      [Pokemon.moveScreenId] = externalScreen(Pokemon.moveScreenId,
+        { "up", "down", "left", "right", "select", "back", "start", "hover" }),
+      [Items.moveItemsScreenId] = externalScreen(Items.moveItemsScreenId,
+        { "up", "down", "select", "back", "start", "hover" }),
+      [Money.amountScreenId] = externalScreen(Money.amountScreenId,
+        { "up", "down", "left", "right", "select", "back", "start" }),
+    },
+  }
+
+  local modernUiRegistered = false
+  local function registerModernUiAdapter()
+    if modernUiRegistered then return end
+    local host = mod.find and mod.find("gen1_modern_ui")
+    if not (host and host.exports and type(host.exports.registerAdapter) == "function") then
+      return
+    end
+    local ok = pcall(host.exports.registerAdapter,
+      { owner = mod.id, contract = mod.exports.gen1ModernUi })
+    if ok then modernUiRegistered = true end
+  end
+
+  mod.events:on("game.ready", function() pcall(registerModernUiAdapter) end)
 
   local liveGame
   mod.events:on("game.ready", function(ev)

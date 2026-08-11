@@ -46,7 +46,7 @@ Practically: don't cache a `{ box, index }` pair across a turn boundary, an even
 - `itemCount(id)`
 - `listItems()` -- a plain `{ id = count }` table (a copy; mutating it does nothing to the Bank).
 - `isValidItem(id, game)` -- `true` when `id` is a non-empty string present in `game.data.items`. Exported for other mods.
-- `validateItemsStorage(game)` -- scans `items` and `orphaned.items` bidirectionally: unknown ids move to `orphaned.items`, ids that become known again merge back into `items`. Returns `{ changed, quarantined, restored, lostItems, restoredItems }` (counts are total item quantities, not distinct ids).
+- `validateItemsStorage(game)` -- scans `items` and `orphaned.items` bidirectionally: unknown ids *and* blacklisted ones (`isBlacklisted`, i.e. an HM/key item) move to `orphaned.items`; ids in `orphaned.items` merge back into `items` only if they're both known and not blacklisted -- a quarantined HM/key item stays quarantined even after it becomes otherwise valid. Returns `{ changed, quarantined, restored, lostItems, restoredItems }` (counts are total item quantities, not distinct ids).
 - `listInvalidItems()` -- a plain `{ id = count }` copy of the quarantined stacks.
 - `invalidItemCount(id)` -- total quarantined quantity for one id, or across every id when `id` is omitted.
 - `isBlacklisted(id, game)` -- true for HMs, key items (needs `game` to check the `keyItem` flag), and anything added through `blacklistItem`.

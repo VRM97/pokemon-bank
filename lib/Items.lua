@@ -10,6 +10,7 @@ local ChoiceBox = require("src.ui.ChoiceBox")
 local Font = require("src.render.Font")
 
 local SCREEN_ID = "PokemonBankItems"
+local MOVE_ITEMS_SCREEN_ID = "PokemonBankMoveItems"
 
 local Module = {}
 
@@ -100,7 +101,7 @@ function Module.install(mod, core)
     local lostItems, restoredItems = {}, {}
     local badIds = {}
     for id, count in pairs(s.items) do
-      if not isValidItem(id, data) then badIds[#badIds + 1] = id end
+      if not isValidItem(id, data) or isBlacklisted(id, data.items[id]) then badIds[#badIds + 1] = id end
     end
     for _, id in ipairs(badIds) do
       local qty = s.items[id] or 0
@@ -113,7 +114,7 @@ function Module.install(mod, core)
     end
     local goodIds = {}
     for id, count in pairs(orphaned.items) do
-      if isValidItem(id, data) then goodIds[#goodIds + 1] = id end
+      if isValidItem(id, data) and not isBlacklisted(id, data.items[id]) then goodIds[#goodIds + 1] = id end
     end
     for _, id in ipairs(goodIds) do
       local qty = orphaned.items[id] or 0
@@ -305,7 +306,7 @@ function Module.install(mod, core)
     local state = { view = "bank", pendingSwap = nil }
     local screen = { isOpaque = true }
     local list
-    local rebuild, openItemActions, completeSwitch
+    local rebuild, openItemActions, completeSwitch, backHandler, chooseCurrent
 
     local function currentStore()
       if state.view == "bank" then return loadStorage().items
@@ -508,14 +509,34 @@ function Module.install(mod, core)
       end
     end
 
+    -- Shared by screen:update's own "b" handling and the Gen1 Modern UI adapter's "back" action below.
+    backHandler = function()
+      if state.pendingSwap then
+        state.pendingSwap = nil
+        rebuild()
+      else
+        game.stack:pop()
+      end
+    end
+
+    -- Whatever pressing A on the highlighted row would do -- list.onChoose already branches on state.pendingSwap itself, so this is the one thing the Gen1 Modern UI "select" action needs to reuse.
+    -- An empty list mirrors ListMenu:update's own empty-list branch, where A closes the screen exactly like B does.
+    chooseCurrent = function()
+      if #list.items == 0 then
+        game.stack:pop()
+        return
+      end
+      local item = list.items[list.index]
+      if item and list.onChoose then list.onChoose(item, list) end
+    end
+
     function screen:update(dt)
       local input = game.input
       if input:wasPressed("select") then
         cycleView()
         return
-      elseif input:wasPressed("b") and state.pendingSwap then
-        state.pendingSwap = nil
-        rebuild()
+      elseif input:wasPressed("b") then
+        backHandler()
         return
       end
       list:update(dt)
@@ -529,6 +550,26 @@ function Module.install(mod, core)
       Font.draw(text, 160 - 8 - Font.width(text), 4)
       love.graphics.setColor(1, 1, 1, 1)
     end
+
+    -- Gen1 Modern UI compatibility surface -- see main.lua's externalScreen and lib/Pokemon.lua's openTransferBoxList for the full explanation.
+    -- No box concept here (item storage isn't paged), so no left/right.
+    screen.screenId = MOVE_ITEMS_SCREEN_ID
+    screen.gen1ModernUi = {
+      title = function() return viewTitle() end,
+      rows = function() return core.publicRows(list) end,
+      index = function() return list.index end,
+      scroll = function() return list.scroll end,
+      footer = function() return list.footer end,
+      up = function() core.moveListCursor(list, -1) end,
+      down = function() core.moveListCursor(list, 1) end,
+      select = function(payload)
+        if payload then core.setListCursor(list, payload) end
+        chooseCurrent()
+      end,
+      back = function() backHandler() end,
+      start = function() cycleView() end,
+      hover = function(payload) core.setListCursor(list, payload) end,
+    }
 
     rebuild()
     game.stack:push(screen)
@@ -650,6 +691,7 @@ function Module.install(mod, core)
 
   return {
     screenId = SCREEN_ID,
+    moveItemsScreenId = MOVE_ITEMS_SCREEN_ID,
     tabEnabled = tabEnabled,
     validateStorage = validateStorage,
   }

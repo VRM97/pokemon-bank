@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.1
+
+Startup validation now also quarantines any HM or key item found sitting in the Bank's item storage, matching `depositItem`'s own blacklist (covers items that got in before the rule applied, e.g. older saves). An item already in quarantine stays there while it's still an HM or key item, even if it's otherwise a valid, known item id -- it no longer gets auto-restored.
+
+Added basic [Gen1 Modern UI](https://github.com/ArmstrongThomas/gen1-modern-ui) compatibility for **TRANSFER BOX**, **MOVE PKMN** and **MOVE ITEM** -- the three screens its generic presenter couldn't already recognize on its own.
+
 ## 1.7.0
 
 New **MOVE PKMN** option under POKéMON: a single browsable view of the Bank, the party and a PC box in place of a plain list. SELECT cycles between the three (BANK > PARTY > PC); Left/Right flips through boxes. Picking a Pokémon opens TO BANK/PARTY/PC (whichever two storages aren't the one currently shown), SWITCH (swap it with another Pokémon in that same storage, navigating boxes to reach the target), STATS and RELEASE. TO BANK/PARTY/PC reuse the bulk transfer exports below for the Bank side; direct PARTY <-> PC moves stay internal to this screen, matching the vanilla PC's own party/box rules (party never drops below one, box capacity 20).

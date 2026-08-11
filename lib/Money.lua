@@ -6,6 +6,7 @@ local TextBox = require("src.render.TextBox")
 local Menu = require("src.ui.Menu")
 
 local SCREEN_ID = "PokemonBankMoney"
+local AMOUNT_SCREEN_ID = "PokemonBankMoneyAmount"
 
 -- Withdrawals are capped so save.money can never cross it, matching what happens to any amount over it anyway the next time GenSave writes the save (setBcd clamps with math.min(save.money, MAX_MONEY), silently dropping the excess). See API.md's maxMoney entry for why the Bank's own balance isn't capped by this itself.
 local MAX_MONEY = 999999
@@ -47,14 +48,9 @@ function Module.install(mod, core)
     return true
   end
 
-  -- QuantityBox (source/src/ui/QuantityBox.lua) is built for item stacks,
-  -- its box fixed at 2 digits (interior 3 tiles: "×02") -- too narrow for a
-  -- money amount, which can run into six digits. Sized to the amount's own
-  -- digit count instead, right edge pinned at column 20 like QuantityBox's
-  -- own two variants (15+5 unpriced, 7+13 priced) so it lines up with them.
-  -- The wallet/bank balance shown above the amount (opts.wallet/opts.bank)
-  -- is a static snapshot from when the box opened, not a live read, since
-  -- neither actually changes until A confirms.
+  -- QuantityBox is built for item stacks, its box fixed at 2 digits -- too narrow for a money amount, which can run into six digits.
+  -- Sized to the amount's own digit count instead, right edge pinned at column 20 like QuantityBox's own two variants (15+5 unpriced, 7+13 priced) so it lines up with them.
+  -- The wallet/bank balance shown above the amount (opts.wallet/opts.bank) is a static snapshot from when the box opened, not a live read, since neither actually changes until A confirms.
   local AmountBox = {}
   AmountBox.__index = AmountBox
   AmountBox.isOpaque = false
@@ -67,6 +63,32 @@ function Module.install(mod, core)
     self.wallet = math.floor(opts.wallet or 0)
     self.bank = math.floor(opts.bank or 0)
     self.onDone = opts.onDone -- onDone(amount | nil on cancel)
+    -- opts.title is display-only, read by gen1ModernUi below -- the native
+    -- draw never shows one (see draw(), just the MONEY/BANK/amount box).
+    self.title = opts.title
+
+    -- Gen1 Modern UI compatibility surface.
+    self.screenId = AMOUNT_SCREEN_ID
+    self.gen1ModernUi = {
+      title = function() return self.title or "AMOUNT" end,
+      rows = function()
+        return {
+          { label = "MONEY", value = ("¥%d"):format(self.wallet), enabled = false },
+          { label = "BANK", value = ("¥%d"):format(self.bank), enabled = false },
+          { label = "AMOUNT", value = ("¥%d"):format(self.amount) },
+        }
+      end,
+      index = function() return 3 end,
+      scroll = function() return 0 end,
+      footer = function() return "A OK   B CANCEL" end,
+      up = function() self:stepUp() end,
+      down = function() self:stepDown() end,
+      left = function() self:pageLeft() end,
+      right = function() self:pageRight() end,
+      select = function() self:confirm() end,
+      back = function() self:cancel() end,
+      start = function() self:jumpMax() end,
+    }
     return self
   end
 
@@ -76,24 +98,39 @@ function Module.install(mod, core)
     return v
   end
 
+  -- Each step is its own method, shared by :update's own D-pad handling below and the gen1ModernUi actions above, so a touch/mouse control does exactly what the matching button does.
+  function AmountBox:stepUp() self.amount = wrapAmount(self.amount + 1, self.max) end
+  function AmountBox:stepDown() self.amount = wrapAmount(self.amount - 1, self.max) end
+  function AmountBox:pageRight() self.amount = math.min(self.max, self.amount + 100) end
+  function AmountBox:pageLeft() self.amount = math.max(1, self.amount - 100) end
+  function AmountBox:jumpMax() self.amount = self.max end
+
+  function AmountBox:confirm()
+    self.game.stack:pop()
+    if self.onDone then self.onDone(self.amount) end
+  end
+
+  function AmountBox:cancel()
+    self.game.stack:pop()
+    if self.onDone then self.onDone(nil) end
+  end
+
   function AmountBox:update(dt)
     local input = self.game.input
     if input:wasPressed("up") then
-      self.amount = wrapAmount(self.amount + 1, self.max)
+      self:stepUp()
     elseif input:wasPressed("down") then
-      self.amount = wrapAmount(self.amount - 1, self.max)
+      self:stepDown()
     elseif input:wasPressed("right") then
-      self.amount = math.min(self.max, self.amount + 100)
+      self:pageRight()
     elseif input:wasPressed("left") then
-      self.amount = math.max(1, self.amount - 100)
+      self:pageLeft()
     elseif input:wasPressed("start") then
-      self.amount = self.max
+      self:jumpMax()
     elseif input:wasPressed("a") then
-      self.game.stack:pop()
-      if self.onDone then self.onDone(self.amount) end
+      self:confirm()
     elseif input:wasPressed("b") then
-      self.game.stack:pop()
-      if self.onDone then self.onDone(nil) end
+      self:cancel()
     end
   end
 
@@ -134,6 +171,7 @@ function Module.install(mod, core)
       max = have,
       wallet = have,
       bank = bankMoney(),
+      title = "DEPOSIT MONEY",
       onDone = function(amount)
         if not amount then return end
         game.save.money = have - amount
@@ -160,6 +198,7 @@ function Module.install(mod, core)
       max = math.min(have, room),
       wallet = game.save.money or 0,
       bank = have,
+      title = "WITHDRAW MONEY",
       onDone = function(amount)
         if not amount then return end
         withdrawMoney(amount)
@@ -222,7 +261,7 @@ function Module.install(mod, core)
 
   mod.log:info("Pokemon Bank: Money tab ready")
 
-  return { screenId = SCREEN_ID, tabEnabled = tabEnabled }
+  return { screenId = SCREEN_ID, amountScreenId = AMOUNT_SCREEN_ID, tabEnabled = tabEnabled }
 end
 
 return Module

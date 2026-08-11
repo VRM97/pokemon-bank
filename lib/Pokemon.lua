@@ -12,6 +12,8 @@ local Font = require("src.render.Font")
 
 local BOX_CAPACITY = 20
 local SCREEN_ID = "PokemonBankBox"
+local TRANSFER_BOX_SCREEN_ID = "PokemonBankTransferBox"
+local MOVE_SCREEN_ID = "PokemonBankMovePkmn"
 
 local Module = {}
 
@@ -396,7 +398,7 @@ function Module.install(mod, core)
 
     local screen = { isOpaque = true }
     local list
-    local rebuild
+    local rebuild, backHandler
 
     local function clampState()
       local st = loadStorage()
@@ -489,6 +491,18 @@ function Module.install(mod, core)
       end
     end
 
+    -- Shared by screen:update's own "b" handling and the Gen1 Modern UI adapter's "back" action below, so a touch/mouse BACK does exactly what the B button does.
+    backHandler = function()
+      if state.stage == "destination" then
+        state.view = state.source.view
+        state.stage = "source"
+        state.source = nil
+        rebuild()
+      else
+        game.stack:pop()
+      end
+    end
+
     rebuild = function()
       clampState()
       local box = currentBox()
@@ -517,14 +531,7 @@ function Module.install(mod, core)
         chooseThisBox()
         return
       elseif input:wasPressed("b") then
-        if state.stage == "destination" then
-          state.view = state.source.view
-          state.stage = "source"
-          state.source = nil
-          rebuild()
-        else
-          game.stack:pop()
-        end
+        backHandler()
         return
       end
       list:update(dt)
@@ -538,6 +545,27 @@ function Module.install(mod, core)
       Font.draw(text, 160 - 8 - Font.width(text), 4)
       love.graphics.setColor(1, 1, 1, 1)
     end
+
+    -- Gen1 Modern UI compatibility surface: read-only accessors plus semantic actions so the presenter can paint this screen, and a touch/mouse user can drive it
+    screen.screenId = TRANSFER_BOX_SCREEN_ID
+    screen.gen1ModernUi = {
+      title = function() return viewTitle() end,
+      rows = function() return core.publicRows(list) end,
+      index = function() return list.index end,
+      scroll = function() return list.scroll end,
+      footer = function() return list.footer end,
+      up = function() core.moveListCursor(list, -1) end,
+      down = function() core.moveListCursor(list, 1) end,
+      left = function() cycleBox(-1) end,
+      right = function() cycleBox(1) end,
+      select = function(payload)
+        if payload then core.setListCursor(list, payload) end
+        chooseThisBox()
+      end,
+      back = function() backHandler() end,
+      start = function() cycleView() end,
+      hover = function(payload) core.setListCursor(list, payload) end,
+    }
 
     rebuild()
     game.stack:push(screen)
@@ -587,7 +615,7 @@ function Module.install(mod, core)
     local screen = { isOpaque = true }
     local list -- current ListMenu; rebuilt on every view/box/data change
 
-    local rebuild, performMove, releaseCurrent, completeSwitch, openMonActions
+    local rebuild, performMove, releaseCurrent, completeSwitch, openMonActions, backHandler, chooseCurrent
 
     local function clampState()
       local st = loadStorage()
@@ -795,6 +823,27 @@ function Module.install(mod, core)
       end
     end
 
+    -- Shared by screen:update's own "b" handling and the Gen1 Modern UI adapter's "back" action below.
+    backHandler = function()
+      if state.pendingSwap then
+        state.pendingSwap = nil
+        rebuild()
+      else
+        game.stack:pop()
+      end
+    end
+
+    -- Whatever pressing A on the highlighted row would do -- list.onChoose already branches on state.pendingSwap itself, so this is the one thing the Gen1 Modern UI "select" action needs to reuse.
+    -- An empty list mirrors ListMenu:update's own empty-list branch, where A closes the screen exactly like B does.
+    chooseCurrent = function()
+      if #list.items == 0 then
+        game.stack:pop()
+        return
+      end
+      local item = list.items[list.index]
+      if item and list.onChoose then list.onChoose(item, list) end
+    end
+
     function screen:update(dt)
       local input = game.input
       if input:wasPressed("select") then
@@ -806,9 +855,8 @@ function Module.install(mod, core)
       elseif input:wasPressed("right") then
         cycleBox(1)
         return
-      elseif input:wasPressed("b") and state.pendingSwap then
-        state.pendingSwap = nil
-        rebuild()
+      elseif input:wasPressed("b") then
+        backHandler()
         return
       end
       list:update(dt)
@@ -822,6 +870,27 @@ function Module.install(mod, core)
       Font.draw(text, 160 - 8 - Font.width(text), 4)
       love.graphics.setColor(1, 1, 1, 1)
     end
+
+    -- Gen1 Modern UI compatibility surface -- see the TRANSFER BOX screen above (openTransferBoxList) for the full explanation.
+    screen.screenId = MOVE_SCREEN_ID
+    screen.gen1ModernUi = {
+      title = function() return viewTitle() end,
+      rows = function() return core.publicRows(list) end,
+      index = function() return list.index end,
+      scroll = function() return list.scroll end,
+      footer = function() return list.footer end,
+      up = function() core.moveListCursor(list, -1) end,
+      down = function() core.moveListCursor(list, 1) end,
+      left = function() cycleBox(-1) end,
+      right = function() cycleBox(1) end,
+      select = function(payload)
+        if payload then core.setListCursor(list, payload) end
+        chooseCurrent()
+      end,
+      back = function() backHandler() end,
+      start = function() cycleView() end,
+      hover = function(payload) core.setListCursor(list, payload) end,
+    }
 
     rebuild()
     game.stack:push(screen)
@@ -1316,6 +1385,8 @@ function Module.install(mod, core)
 
   return {
     screenId = SCREEN_ID,
+    transferBoxScreenId = TRANSFER_BOX_SCREEN_ID,
+    moveScreenId = MOVE_SCREEN_ID,
     tabEnabled = tabEnabled,
     validateStorage = validateStorage,
   }
