@@ -70,6 +70,26 @@ function Module.install(mod, core)
     end
   end
 
+  local function stampTrainer(game, mon)
+    if type(mon) ~= "table" then return end
+    local player = game and game.save and game.save.player
+    if not player then return end
+    mon.ot = player.name
+    mon.otId = player.id
+    mon.otName = player.name
+  end
+
+  -- An Egg's OT is stamped once, at creation, and Gold's own hatch preserves whatever is already there rather than re-stamping.
+  -- CRYSTAL_251's own hatch already re-stamps ot/otId at hatch time regardless of what the egg already carries, so this only changes behavior for Gold's own Day Care.
+  local function stampEggTrainer(game, mon)
+    if mon and mon.isEgg then stampTrainer(game, mon) end
+  end
+
+  -- When INHERIT TRAINER is enabled: the withdrawing trainer becomes any Pokémon's OT, not just an Egg's. Deliberately NOT part of reshapeForActiveGame.
+  local function stampNewTrainer(game, mon)
+    if mod.options:get("inherit_trainer_on_withdraw") then stampTrainer(game, mon) end
+  end
+
   -- Reshaped here, once, right before a withdrawn mon actually enters the currently active game -- recomputed with the target generation's own formula over the target generation's own base stats.
   local function reshapeForActiveGame(game, mon)
     if type(mon) ~= "table" then return mon end
@@ -77,6 +97,7 @@ function Module.install(mod, core)
     if mon.experience == nil then mon.experience = mon.exp end
     mirrorHeldItem(mon)
     mirrorEggFields(mon)
+    stampEggTrainer(game, mon)
     local def = game and game.data and game.data.pokemon and game.data.pokemon[mon.species]
     local baseStats = def and def.baseStats
     if not (baseStats and type(mon.stats) == "table") then return mon end
@@ -372,6 +393,7 @@ function Module.install(mod, core)
           normalizeBoxes(s)
           markDirty()
           reshapeForActiveGame(game, mon)
+          stampNewTrainer(game, mon)
           table.insert(game.save.party, mon)
           registerDex(game, mon.species)
           mod.events:emit("mod.vrm_pokemon_bank.pokemon_withdrawn",
@@ -1038,7 +1060,10 @@ function Module.install(mod, core)
   mod.exports.withdrawPokemon = function(boxNum, index, game)
     local mon = withdrawMon(boxNum, index)
     if mon then
-      if game then reshapeForActiveGame(game, mon) end
+      if game then
+        reshapeForActiveGame(game, mon)
+        stampNewTrainer(game, mon)
+      end
       registerDex(game, mon.species)
       mod.events:emit("mod.vrm_pokemon_bank.pokemon_withdrawn", { box = boxNum, index = index, mon = mon })
     end
@@ -1347,6 +1372,7 @@ function Module.install(mod, core)
       if #withdrawn < partySpace then
         local mon = entry.mon
         reshapeForActiveGame(game, mon)
+        stampNewTrainer(game, mon)
         table.insert(party, mon)
         registerDex(game, mon.species)
         withdrawn[#withdrawn + 1] = { mon = mon }
@@ -1444,6 +1470,7 @@ function Module.install(mod, core)
         local box = game.save.boxes[boxNum]
         if box and #box < Boxes.CAPACITY then
           reshapeForActiveGame(game, mon)
+          stampNewTrainer(game, mon)
           table.insert(box, mon)
           registerDex(game, mon.species)
           withdrawn[#withdrawn + 1] = { mon = mon, pcBox = boxNum }

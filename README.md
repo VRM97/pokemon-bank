@@ -28,7 +28,9 @@ Withdrawing into a full party, or depositing your Bag's last non-key item stack 
 
 **Crossing generations just works.** Deposit a Pokémon on Red and withdraw it on Gold, or the other way around, and its stats come out right on either side -- Gold's split Special Attack/Special Defense is recalculated from the same DVs and level the moment it's withdrawn there, and recombines into Red's single Special the same way going back. Nothing about the Pokémon is lost either way; a Gold-only detail (held item, gender, Pokérus, shininess, and so on) simply has nothing to do on Red and reappears exactly as it was once you're back on Gold.
 
-**An Egg crosses generations too**, hatch timer and already-rolled moves intact either way -- withdrawing it on Gold or on a Red/Blue/Yellow save with [CRYSTAL_251](https://github.com/Deftones565/gen1recomp-mod-crystal-251) installed picks up right where it left off. A plain Red/Blue/Yellow save has no Day Care breeding at all, so an Egg deposited from elsewhere is set aside the same way an unknown Pokémon is (see **Where the data lives** below) until it's viewed from a game that knows what to do with it.
+**An Egg crosses generations too**, hatch timer and already-rolled moves intact either way -- withdrawing it on Gold or on a Red/Blue/Yellow save with [CRYSTAL_251](https://github.com/Deftones565/gen1recomp-mod-crystal-251) installed picks up right where it left off. A plain Red/Blue/Yellow save has no Day Care breeding at all, so an Egg deposited from elsewhere is set aside the same way an unknown Pokémon is (see **Where the data lives** below) until it's viewed from a game that knows what to do with it. An Egg **always** becomes yours (OT, OT ID and OT name) the moment you withdraw it.
+
+Turn on **INHERIT TRAINER** (off by default) to make every *other* Pokémon you withdraw become yours too, the same way: OT, OT ID and OT name change to your own the moment it leaves the Bank.
 
 Set **SHOW IN PC MENU** option to off (on by default) hides the row if you'd rather not see it; another mod can also hide it outright -- see [API.md](./API.md).
 

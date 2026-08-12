@@ -20,14 +20,13 @@ return function(mod)
     { key = "show_pokemon_tab", label = "POKéMON MENU", type = "toggle", default = true },
     { key = "show_items_tab", label = "ITEMS MENU", type = "toggle", default = true },
     { key = "show_money_tab", label = "MONEY MENU", type = "toggle", default = true },
+    { key = "inherit_trainer_on_withdraw", label = "INHERIT TRAINER", type = "toggle", default = false },
   })
   local SaveSerializer = require("src.core.SaveSerializer")
   local SaveData = require("src.core.SaveData")
   local Menu = require("src.ui.Menu")
   local TextBox = require("src.render.TextBox")
   local ChoiceBox = require("src.ui.ChoiceBox")
-  local OptionRows = require("src.ui.OptionRows")
-  local PaletteFX = require("src.render.PaletteFX")
   local GameVersion = require("src.core.GameVersion")
   -- -----------------------------------------------------------------------
   -- Persistence
@@ -354,57 +353,31 @@ return function(mod)
     end))
   end
 
-  local function dataRows()
-    return {
-      { id = "vrm_pokemon_bank_export", label = "EXPORT DATA", activate = function(g) exportBank(g) end },
-      { id = "vrm_pokemon_bank_import", label = "IMPORT DATA", activate = function(g) importBank(g) end },
-      { id = "vrm_pokemon_bank_delete", label = "DELETE DATA", activate = function(g) confirmDeleteBank(g) end },
-    }
-  end
-
-  local DataScreen = {}
-  DataScreen.__index = DataScreen
-  DataScreen.isOpaque = true
-
-  function DataScreen:sgbPalettes(game)
-    return PaletteFX.wholeNamed(game.data, "MEWMON")
-  end
-
-  function DataScreen.new(game)
-    return setmetatable({
-      game = game, index = 1, scroll = 0, rows = dataRows(),
-      -- Gen1 Modern UI auto-adopts any screen built on OptionRows whose screenId ends in "Options"/"Settings" -- this does, so it needs no entry in mod.exports.gen1ModernUi.screens below.
-      screenId = DATA_SCREEN_ID,
-    }, DataScreen)
-  end
-
-  -- Modelled on OptionsMenu:update: same four-row viewport, cursor and BACK row as the menu this opens from. Every row here is activate-only (A), never step (Left/Right) -- DELETE DATA is not something a stray direction press should be able to reach.
-  function DataScreen:update()
-    local input = self.game.input
-    local rows = self.rows
-    local backRow = #rows + 1
-    if input:wasPressed("up") then
-      self.index = self.index > 1 and self.index - 1 or backRow
-    elseif input:wasPressed("down") then
-      self.index = self.index < backRow and self.index + 1 or 1
-    elseif input:wasPressed("a") then
-      local row = rows[self.index]
-      if row and row.activate then
-        row.activate(self.game)
-      else
-        self.game.stack:pop()
-      end
-    elseif input:wasPressed("b") or input:wasPressed("start") then
-      self.game.stack:pop()
-    end
-    self.scroll = OptionRows.clampScroll(self.index, self.scroll or 0, #rows, backRow)
-  end
-
-  function DataScreen:draw()
-    OptionRows.draw(self.game, self.rows, self.index, self.scroll or 0, "BACK", #self.rows + 1)
-  end
-
-  mod.content.screens:register(DATA_SCREEN_ID, { new = DataScreen.new })
+  -- The OPTIONS submenu EXPORT/IMPORT/DELETE open into. Built on mod.ui.ListMenu -- the widget toolkit ModUI.lua calls "the stable mod-facing surface" -- rather than a hand-rolled OptionRows screen, the same way overworld_wild_spawns builds its own OPTIONS submenus (lib/settings_menus.lua): one generation-agnostic widget instead of a renderer tied to Gen 1's own OPTIONS-menu chrome.
+  mod.content.screens:register(DATA_SCREEN_ID, {
+    new = function(game)
+      local items = {
+        { label = "EXPORT DATA", onSelect = function() exportBank(game) end },
+        { label = "IMPORT DATA", onSelect = function() importBank(game) end },
+        { label = "DELETE DATA", onSelect = function() confirmDeleteBank(game) end },
+        { label = "CANCEL" },
+      }
+      return mod.ui.ListMenu.new(game, PC_MENU_LABEL, items, {
+        -- Only CANCEL (no onSelect) closes the screen; EXPORT/IMPORT/DELETE
+        -- push their own message/confirmation on top and leave this list
+        -- underneath, so choosing again after dismissing one doesn't require
+        -- reopening POKéMON BANK from OPTIONS.
+        onChoose = function(item, menu)
+          if not item then return end
+          if item.onSelect then
+            item.onSelect()
+          elseif menu and menu.close then
+            menu:close()
+          end
+        end,
+      })
+    end,
+  })
 
   -- Gen1 Modern UI reads a live ListMenu's index/scroll fields directly instead of faking D-pad presses, but the clamp-then-resync-scroll math is private to ListMenu (moveIndex/syncScroll are local there).
   -- Mirrored here so a touch/mouse action can move a live list's cursor exactly the same way a real D-pad press would, without a copy of this logic in every lib/ module.
@@ -639,7 +612,7 @@ return function(mod)
     end
   end
 
-  -- A second entry point, independent of SHOW IN PC MENU/pcEntryEnabled above: EXPORT/IMPORT/DELETE are maintenance actions on the Bank's own file, not something a run needs a PC for, so they sit on the game's OPTIONS menu instead of behind it.
+  -- A second entry point, independent of SHOW IN PC MENU/pcEntryEnabled above: EXPORT/IMPORT/DELETE are maintenance actions on the Bank's own file, not something a run needs a PC for, so they sit on the game's OPTIONS menu instead of behind it. ui.options.rows carries the same name and (game, rows) shape on both generations (source/docs/preparing-your-mod-for-gen2.md), so one hook reaches Red/Blue/Yellow's OPTIONS and Gold's alike.
   mod.hooks:wrap("ui.options.rows", function(next_, game, rows)
     local out = next_(game, rows)
     if type(out) ~= "table" then return out end
@@ -652,7 +625,7 @@ return function(mod)
     for _, r in ipairs(out) do
       if r.label == "MODS" then hasMods = true break end
     end
-    -- Anchored on MODS where it exists (Red/Blue/Yellow); Gold's OPTIONS menu has no MODS row at all -- insertBefore's own fallback would otherwise drop the row after CANCEL there, so this anchors on CANCEL instead, which Gold's row list does carry.
+    -- Anchored on MODS where it exists (Red/Blue/Yellow); Gold's OPTIONS menu has no MODS row at all, but it does carry its own CANCEL inside `rows` (Gen 1's CANCEL is appended after the hook instead) -- insertBefore's own fallback would otherwise drop the row after CANCEL there, so this anchors on CANCEL instead.
     return mod.ui.insertBefore(out, hasMods and "MODS" or "CANCEL", row)
   end)
 

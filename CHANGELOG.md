@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.9.2
+
+**Withdrawing an Egg now stamps it to whoever withdrew it.** Gold's own Day Care sets an Egg's OT once, at creation, and its hatch (`Breeding.hatch`) keeps whatever is already there rather than re-checking -- correct for an Egg that's never left its own save, wrong for one pulled out of the Bank, where the trainer who's actually going to walk it to hatch is whoever just withdrew it, not whoever was running the Day Care when it was laid. `ot`/`otId`/`otName` are re-stamped to the withdrawing trainer the moment it leaves the Bank. CRYSTAL_251's own hatch already re-stamps regardless of what the Egg carries in, so this only changes anything for Gold's Day Care. This one is unconditional, unlike **INHERIT TRAINER** below -- an Egg always gets the withdrawing trainer, whatever that option is set to.
+
+New **INHERIT TRAINER** option (off by default): withdrawing a Pokémon that isn't an Egg now optionally re-stamps its OT/OT ID/OT name to whoever just withdrew it too, the same way an Egg always does. Only an actual withdrawal triggers it (WITHDRAW PKMN, MOVE PKMN, both bulk exports) -- looking at STATS on a boxed Pokémon never rewrites whose it is, on or off.
+
 ## 1.9.1
 
 **Eggs now cross generations too**, the same way a hatched Pokémon already did. Gold tracks an Egg's remaining incubation on `mon.eggSteps` and keeps its already-inherited moves on `mon.moves` from the moment it's made; CRYSTAL_251 tracks the same count on `mon.eggCycles` and keeps those moves out of sight on `mon.eggMoves` until it hatches, matching Crystal's own Day Care screen. Both are kept mirrored on withdraw (cycles only ever fall, on either side, so the smaller one is always the current one), and the moveset is reshaped onto whichever field the destination actually reads.
