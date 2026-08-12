@@ -1,5 +1,6 @@
 local V = ...
 
+local GameVersion = require("src.core.GameVersion")
 local Stats = require("src.pokemon.Stats")
 local Party = require("src.pokemon.Party")
 local Strings = require("src.core.Strings")
@@ -32,7 +33,7 @@ function Module.install(mod, core)
 
   local function nameOf(game, mon)
     local def = game.data.pokemon[mon.species]
-    return mon.nickname or (def and def.name) or tostring(mon.species)
+    return mon.nickname or mon.name or (def and def.name) or tostring(mon.species)
   end
 
   local function ensureStats(game, mon)
@@ -41,12 +42,65 @@ function Module.install(mod, core)
     return mon
   end
 
-  -- Mirrors Evolution's own seen/owned write. Never called on release or on a move that stays inside the Bank -- see API.md's withdrawPokemon entry.
-  local function registerDex(game, species)
-    if game and game.save and game.save.pokedex then
-      game.save.pokedex.seen[species] = true
-      game.save.pokedex.owned[species] = true
+  -- CRYSTAL_251 gives a mon its own held item on mon.heldItem instead of Gold's mon.item. Mirrored both ways the same way exp/experience are, but only when that mod is actually installed and loaded.
+  local function mirrorHeldItem(mon)
+    local crystal251 = mod.find and mod.find("CRYSTAL_251")
+    if not crystal251 then return end
+    if mon.heldItem == nil then mon.heldItem = mon.item end
+    if mon.item == nil then mon.item = mon.heldItem end
+  end
+
+  -- Reshaped here, once, right before a withdrawn mon actually enters the currently active game -- recomputed with the target generation's own formula over the target generation's own base stats.
+  local function reshapeForActiveGame(game, mon)
+    if type(mon) ~= "table" then return mon end
+    if mon.exp == nil then mon.exp = mon.experience end
+    if mon.experience == nil then mon.experience = mon.exp end
+    mirrorHeldItem(mon)
+    local def = game and game.data and game.data.pokemon and game.data.pokemon[mon.species]
+    local baseStats = def and def.baseStats
+    if not (baseStats and type(mon.stats) == "table") then return mon end
+    if GameVersion.generation() == 2 then
+      if baseStats.specialAttack and (mon.stats.specialAttack == nil or mon.stats.specialDefense == nil) then
+        local Mon = require("src.battle.gen2.Mon")
+        local computed = Mon.stats(baseStats, mon.dvs or {}, mon.level or 1, mon.statExp)
+        mon.stats.specialAttack = mon.stats.specialAttack or computed.specialAttack
+        mon.stats.specialDefense = mon.stats.specialDefense or computed.specialDefense
+      end
+      if mon.maxHp == nil then mon.maxHp = mon.stats.hp end
+      if mon.types == nil then mon.types = def.types end
+      if mon.catchRate == nil then mon.catchRate = def.catchRate end
+    else
+      if mon.stats.special == nil and baseStats.special then
+        mon.stats.special = Stats.calc(def, mon.level or 1, mon.dvs or {}, mon.statExp).special
+      end
+      if mon.catchRate == nil then mon.catchRate = def.catchRate end
     end
+    return mon
+  end
+
+  -- Gold's builtins carry a "Gen2" prefix -- Screens.push does not translate a Gen 1 id on its own, so the STATS submenu below has to pick the right one itself.
+  -- reshapeForActiveGame run here too so a look at STATS is never stale, whether or not the mon ends up actually leaving the Bank.
+  local function openSummary(game, mon)
+    reshapeForActiveGame(game, mon)
+    local Screens = require("src.ui.Screens")
+    if GameVersion.generation() == 2 then
+      Screens.push(game, "Gen2SummaryMenu", {
+        mon = mon,
+        onClose = function() game.stack:pop() end,
+      })
+    else
+      Screens.push(game, "SummaryMenu", mon)
+    end
+  end
+
+  -- Mirrors Evolution's own seen/owned write. Never called on release or on a move that stays inside the Bank -- see API.md's withdrawPokemon entry.
+  -- The "owned" field itself is named differently per generation -- owned on Red/Blue/Yellow, caught on Gold -- so this writes whichever one the active save actually has.
+  local function registerDex(game, species)
+    local dex = game and game.save and game.save.pokedex
+    if not dex then return end
+    if type(dex.seen) == "table" then dex.seen[species] = true end
+    local owned = dex.owned or dex.caught
+    if type(owned) == "table" then owned[species] = true end
   end
 
   -- ---------------------------------------------------------------------
@@ -98,15 +152,32 @@ function Module.install(mod, core)
     return s.orphaned
   end
 
+  -- A held item can go stale the same way a bank item can -- an id from an uninstalled mod, or one this game's item table simply doesn't carry.
+  -- Checked on every mon that stays valid, and quarantined into the same table bank-item validation uses, rather than a separate list.
+  -- Cleared off BOTH fields at once and quarantined once, not once per field, treating them as two held items would double-count the one Pokémon is actually holding.
+  local function checkHeldItem(game, mon, orphaned, lostItems)
+    mirrorHeldItem(mon)
+    local item = mon.item or mon.heldItem
+    if not item then return false end
+    local valid = mod.exports.isValidItem and mod.exports.isValidItem(item, game)
+    local blacklisted = mod.exports.isBlacklisted and mod.exports.isBlacklisted(item, game)
+    if valid and not blacklisted then return false end
+    mon.item = nil
+    mon.heldItem = nil
+    orphaned.items[item] = (orphaned.items[item] or 0) + 1
+    lostItems[#lostItems + 1] = { id = item, count = 1 }
+    return true
+  end
+
   local function validateStorage(game)
     local data = game and game.data
     if not data then
-      return { changed = false, quarantined = 0, restored = 0, lostMons = {}, restoredMons = {} }
+      return { changed = false, quarantined = 0, restored = 0, lostMons = {}, restoredMons = {}, lostItems = {} }
     end
     local s = loadStorage()
     local orphaned = ensureOrphaned(s)
     local quarantined, restored = 0, 0
-    local lostMons, restoredMons = {}, {}
+    local lostMons, restoredMons, lostItems = {}, {}, {}
     for boxNum = 1, #s.boxes do
       local box = s.boxes[boxNum]
       for idx = #box, 1, -1 do
@@ -116,6 +187,8 @@ function Module.install(mod, core)
           orphaned.mons[#orphaned.mons + 1] = mon
           quarantined = quarantined + 1
           lostMons[#lostMons + 1] = { species = mon.species, from = "BOX " .. boxNum }
+        elseif checkHeldItem(game, mon, orphaned, lostItems) then
+          markDirty()
         end
       end
     end
@@ -126,6 +199,7 @@ function Module.install(mod, core)
       local mon = orphaned.mons[idx]
       if isValidPokemon(mon, data) then
         table.remove(orphaned.mons, idx)
+        checkHeldItem(game, mon, orphaned, lostItems)
         -- Find space in current target box or create new if needed
         if #targetBox >= BOX_CAPACITY then
           s.boxes[#s.boxes + 1] = {}
@@ -139,11 +213,12 @@ function Module.install(mod, core)
     end
     normalizeBoxes(s)
     return {
-      changed = quarantined > 0 or restored > 0,
+      changed = quarantined > 0 or restored > 0 or #lostItems > 0,
       quarantined = quarantined,
       restored = restored,
       lostMons = lostMons,
       restoredMons = restoredMons,
+      lostItems = lostItems,
     }
   end
 
@@ -236,7 +311,7 @@ function Module.install(mod, core)
       { label = action, onSelect = onAction },
       { label = "STATS", keepOpen = true, onSelect = function()
           ensureStats(game, mon)
-          require("src.ui.Screens").push(game, "SummaryMenu", mon)
+          openSummary(game, mon)
         end },
       { label = "CANCEL" },
     }, { tx = 9, ty = 10, tw = 11, th = 8, noSound = true }))
@@ -272,6 +347,7 @@ function Module.install(mod, core)
           table.remove(box, item.value)
           normalizeBoxes(s)
           markDirty()
+          reshapeForActiveGame(game, mon)
           table.insert(game.save.party, mon)
           registerDex(game, mon.species)
           mod.events:emit("mod.vrm_pokemon_bank.pokemon_withdrawn",
@@ -784,7 +860,7 @@ function Module.install(mod, core)
       end }
       rows[#rows + 1] = { label = "STATS", keepOpen = true, onSelect = function()
         ensureStats(game, mon)
-        require("src.ui.Screens").push(game, "SummaryMenu", mon)
+        openSummary(game, mon)
       end }
       rows[#rows + 1] = { label = "RELEASE", onSelect = function() releaseCurrent(idx, mon) end }
       rows[#rows + 1] = { label = "CANCEL" }
@@ -938,6 +1014,7 @@ function Module.install(mod, core)
   mod.exports.withdrawPokemon = function(boxNum, index, game)
     local mon = withdrawMon(boxNum, index)
     if mon then
+      if game then reshapeForActiveGame(game, mon) end
       registerDex(game, mon.species)
       mod.events:emit("mod.vrm_pokemon_bank.pokemon_withdrawn", { box = boxNum, index = index, mon = mon })
     end
@@ -1245,6 +1322,7 @@ function Module.install(mod, core)
     for _, entry in ipairs(toWithdraw) do
       if #withdrawn < partySpace then
         local mon = entry.mon
+        reshapeForActiveGame(game, mon)
         table.insert(party, mon)
         registerDex(game, mon.species)
         withdrawn[#withdrawn + 1] = { mon = mon }
@@ -1341,6 +1419,7 @@ function Module.install(mod, core)
         local boxNum = ((currentPcBoxNum - 1 + off) % Boxes.COUNT) + 1
         local box = game.save.boxes[boxNum]
         if box and #box < Boxes.CAPACITY then
+          reshapeForActiveGame(game, mon)
           table.insert(box, mon)
           registerDex(game, mon.species)
           withdrawn[#withdrawn + 1] = { mon = mon, pcBox = boxNum }

@@ -1,10 +1,10 @@
 # Pokémon Bank
 
-A second storage for Pokémon, items and money that lives **outside every gen1recomp save file**. Deposit a Pokémon, an item or money while playing one save -- any of Red, Blue or Yellow, any slot -- and withdraw it while playing a completely different one. The Bank is its own file, so New Game, deleting a save slot or switching versions never touches it.
+A second storage for Pokémon, items and money that lives **outside every gen1recomp save file**. Deposit a Pokémon, an item or money while playing one save -- any of Red, Blue, Yellow or Gold, any slot -- and withdraw it while playing a completely different one. The Bank is its own file, so New Game, deleting a save slot or switching versions never touches it.
 
 ## How to use it
 
-Open any Pokémon Center PC and select **POKéMON BANK**. Three options:
+Open any Pokémon Center PC and select **POKéMON BANK**. On Red/Blue/Yellow it's part of the same WHICH PC list your own bedroom PC opens too; on Gold it's a row on the Pokécenter's "Access whose PC?" screen, next to BILL's PC and PROF.OAK's PC -- Gold's own bedroom PC has no box access at all (same as BILL's storage), so POKéMON BANK is Pokécenter-only there. Three options:
 - **POKéMON**:
   - **WITHDRAW PKMN** lists the current box's Pokémon by name and level; picking one offers WITHDRAW (sends it to your party) or STATS.
   - **DEPOSIT PKMN** lists your party the same way; picking one offers DEPOSIT (your last Pokémon can't be deposited) or STATS.
@@ -25,6 +25,8 @@ Open any Pokémon Center PC and select **POKéMON BANK**. Three options:
 Withdrawing into a full party, or depositing your Bag's last non-key item stack it needs a slot for, behaves the same way the vanilla PC/Bag do: you're told, nothing is lost.
 
 **Withdrawing register it in your Pokédex** if it wasn't already seen/owned there -- the same way evolving one does. Depositing, releasing and moving Pokémon within the Bank never touch the Pokédex; only taking one out (to your party, or straight to a PC box through another mod's Bank integration) does.
+
+**Crossing generations just works.** Deposit a Pokémon on Red and withdraw it on Gold, or the other way around, and its stats come out right on either side -- Gold's split Special Attack/Special Defense is recalculated from the same DVs and level the moment it's withdrawn there, and recombines into Red's single Special the same way going back. Nothing about the Pokémon is lost either way; a Gold-only detail (held item, gender, Pokérus, shininess, and so on) simply has nothing to do on Red and reappears exactly as it was once you're back on Gold.
 
 Set **SHOW IN PC MENU** option to off (on by default) hides the row if you'd rather not see it; another mod can also hide it outright -- see [API.md](./API.md).
 
@@ -47,6 +49,13 @@ One file, `bank/storage.lua`, written next to `saves/` and `options.lua` in a po
 **It's written on the same schedule as your save file.** A Bank transaction only changes things in memory; the actual write to `storage.lua` happens alongside the next time the game itself saves (a manual SAVE, an autosave mod, anything that reaches `Game:writeSave`). This is deliberate: if the Bank wrote immediately, resetting without saving after a deposit would leave you with the Pokémon both in the Bank *and* back in your unsaved party -- free duplication. Waiting for the same save point the game already uses means a reset always reverts both together, so nothing can be duplicated or lost that way. Before writing, the previous `storage.lua` rolls into `storage.lua.bak` and the new one stages as `storage.lua.tmp` before the swap -- the same backup-and-staged-write discipline the game's own save files use -- so a crash mid-write leaves a recoverable copy instead of a half-written file.
 
 **After you load a save**, the Bank checks every stored Pokémon and item against the active game's data. A Pokémon whose species or any move is unknown is set aside in an internal invalid list (not shown in the normal WITHDRAW lists); an item whose id is unknown is set aside the same way, and so is an HM or key item found in storage (they can never be deposited going forward, but this catches ones that ended up there some other way -- an older save, a mod change, and so on). If something that was invalid becomes valid again -- because you installed the mod that defines it, or switched to a version that includes it -- it is moved back automatically (Pokémon go to the end of the last box); an HM or key item stays set aside even then, since it's still not allowed in the Bank. You get a short summary message when anything moved.
+
+The game's own **OPTIONS** menu has a **POKéMON BANK** row, independent of **SHOW IN PC MENU** -- it opens a page with three actions:
+- **EXPORT DATA** opens your device's own file dialog (Windows/macOS/Linux) so you can save the Bank's entire contents wherever you like, as a `.lua` file. Where no dialog is available (mobile, consoles), it writes to `bank/export.lua` instead, rolling any file already there into `bank/export.lua.bak` first so exporting again never loses the previous one.
+- **IMPORT DATA** opens the same dialog to pick a file to load and, after you confirm, **replaces the Bank's current contents with it** -- anything deposited since that export was made is gone. Without a dialog, it reads `bank/export.lua` back in instead.
+- **DELETE DATA** erases the Bank's storage folder entirely -- every box, item, stored ¥, and any leftover export files -- back to nothing. Since there's no way to get any of it back afterward, it's the only Bank action that asks **twice** before going through, unlike the single confirmation RELEASE PKMN or TOSS ITEM ask for.
+
+The file dialog **blocks the game** while it's open, the same as choosing a ROM to import does. EXPORT/IMPORT/DELETE all take effect on disk immediately rather than waiting for the next save, unlike a normal deposit/withdraw (see **Where the data lives** above).
 
 ## For mod authors
 

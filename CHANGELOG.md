@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.9.0
+
+Added Gold (Gen 2) support. Fixes were needed in three places:
+- The **POKéMON BANK** row on the game's own OPTIONS menu now anchors on **CANCEL** when **MODS** isn't in the row list, which is the case on Gold's OPTIONS menu (it has no MODS row) -- it used to land after CANCEL instead of before it.
+- **A Pokémon can now cross generations cleanly.** A Gen 1 Pokémon's `stats.special` splits into Gold's `stats.specialAttack`/`stats.specialDefense` the moment it's withdrawn into a Gold save, and a Gold Pokémon's split recombines into `stats.special` the moment it's withdrawn into a Red/Blue/Yellow save -- computed with the target generation's own formula over the target generation's own base stats (`dvs`/`statExp`/`level` are the same shape and the same numbers on both, so the target's own math gives the right per-species answer instead of a copy). `exp`/`experience` are kept mirrored both ways, and `maxHp`/`types`/`catchRate` are backfilled from the target generation's own species data where a Gen 1 record doesn't carry them. Everything else a mon carries (`gender`, `item`, `happiness`, `pokerus`, `shiny`, `otName`, `caughtLevel`...) already degrades gracefully on the generation that doesn't use it -- the engine's own Gold code already reads every one of those with a nil-safe fallback.
+
+A Pokémon's **held item is now validated too**, on every save load, the same as the Bank's own item storage: an id the active game doesn't recognize (a mod-added item whose mod is gone, or a Gold held-only item viewed on Red) or one that's HM/key-item blacklisted is stripped off the Pokémon and moved into the same item quarantine `lib/Items.lua` already keeps -- reachable back out with WITHDRAW ITEM once it's valid again, and shown on the load-time report under "Items removed:" alongside everything else that got quarantined.
+
+**[CRYSTAL_251](https://github.com/Deftones565/gen1recomp-mod-crystal-251) held items are recognized too**, when that mod is installed: it keeps a Pokémon's held item on `mon.heldItem` instead of Gold's `mon.item`. Both fields are kept mirrored to the same id -- so a Pokémon holding an item under CRYSTAL_251 shows up holding it on Gold once withdrawn there, and the other way around -- and validated as the one item they actually represent, not counted twice. Nothing about this touches CRYSTAL_251 on any other boot: `mod.find("CRYSTAL_251")` itself is the capability check, since that mod never loads anywhere but a Gen 1 boot that has it installed.
+
+## 1.8.0
+
+New **POKéMON BANK** row on the game's own OPTIONS menu: opens a full OPTIONS-style page with **EXPORT DATA**, **IMPORT DATA** and **DELETE DATA**.
+
+EXPORT/IMPORT DATA open the host's own native file dialog (Windows/macOS/Linux) so the player picks exactly where the `.lua` file goes, rather than a fixed path; IMPORT still asks to confirm first, since it replaces everything currently stored. Where no dialog can be opened (mobile, consoles), both fall back to a fixed `bank/export.lua`, rolling any file already there into `bank/export.lua.bak` first.
+
+DELETE DATA removes the Bank's entire storage folder (every box, item, stored money and any leftover export files), behind two separate confirmations rather than the usual one, there's no way to get any of it back afterward.
+
 ## 1.7.1
 
 Startup validation now also quarantines any HM or key item found sitting in the Bank's item storage, matching `depositItem`'s own blacklist (covers items that got in before the rule applied, e.g. older saves). An item already in quarantine stays there while it's still an HM or key item, even if it's otherwise a valid, known item id -- it no longer gets auto-restored.

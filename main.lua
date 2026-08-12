@@ -2,7 +2,16 @@ local STORAGE_DIR = "bank"
 local STORAGE_FILE = STORAGE_DIR .. "/storage.lua"
 local STORAGE_BACKUP = STORAGE_FILE .. ".bak"
 local STORAGE_TMP = STORAGE_FILE .. ".tmp"
+local EXPORT_FILE = STORAGE_DIR .. "/export.lua"
+local EXPORT_BACKUP = EXPORT_FILE .. ".bak"
 local PC_MENU_LABEL = "POKéMON BANK"
+local DATA_SCREEN_ID = "PokemonBankDataOptions"
+
+-- Every filename this mod has ever written under STORAGE_DIR. DELETE DATA (main.lua) removes the whole folder by name rather than by listing it, since the portable filesystem has no getDirectoryItems to discover them with -- only getInfo/read/write/remove/createDirectory.
+local KNOWN_STORAGE_FILES = {
+  "storage.lua", "storage.lua.bak", "storage.lua.tmp",
+  "export.lua", "export.lua.bak",
+}
 
 return function(mod)
   mod.options:define({
@@ -15,6 +24,11 @@ return function(mod)
   local SaveSerializer = require("src.core.SaveSerializer")
   local SaveData = require("src.core.SaveData")
   local Menu = require("src.ui.Menu")
+  local TextBox = require("src.render.TextBox")
+  local ChoiceBox = require("src.ui.ChoiceBox")
+  local OptionRows = require("src.ui.OptionRows")
+  local PaletteFX = require("src.render.PaletteFX")
+  local GameVersion = require("src.core.GameVersion")
   -- -----------------------------------------------------------------------
   -- Persistence
   -- -----------------------------------------------------------------------
@@ -208,12 +222,192 @@ return function(mod)
     return value
   end
 
-  -- Gen1 Modern UI reads a live ListMenu's index/scroll fields directly (see
-  -- registerModernUiAdapter below) instead of faking D-pad presses, but the
-  -- clamp-then-resync-scroll math is private to src/ui/ListMenu.lua
-  -- (moveIndex/syncScroll are local there). Mirrored here so a touch/mouse
-  -- action can move a live list's cursor exactly the same way a real D-pad
-  -- press would, without a copy of this logic in every lib/ module.
+  local FileDialog = V.require("FileDialog")
+
+  local function message(game, text)
+    game.stack:push(TextBox.new(game, text))
+  end
+
+  -- EXPORT DATA/IMPORT DATA (the OPTIONS menu screen below) prefer the host's own native file dialog: the player picks exactly where the file goes, same as any other app.
+  -- Where no dialog can be opened (mobile, consoles) they fall back to a fixed file next to STORAGE_FILE -- rolling any previous export into EXPORT_BACKUP first, so exporting again never loses the one before it.
+  local function exportBank(game)
+    loadStorage()
+    local ok, encoded = pcall(SaveSerializer.encode, storage)
+    if not ok then
+      message(game, "Export failed.\nCouldn't encode\nthe BANK data.")
+      return
+    end
+    if FileDialog.canDialog() then
+      local path = FileDialog.chooseSave(
+        "Save POKéMON BANK data", "bank_export.lua", "BANK data", "*.lua")
+      if not path then return end -- the player cancelled
+      if path:sub(-4):lower() ~= ".lua" then path = path .. ".lua" end
+      local written, err = FileDialog.writeFile(path, encoded)
+      if not written then
+        message(game, "Export failed.\nCouldn't write\nthat file.")
+        mod.log:warn("bank export failed: %s", tostring(err))
+        return
+      end
+      message(game, "BANK data was\nexported.")
+      return
+    end
+    pcall(function() fs().createDirectory(STORAGE_DIR) end)
+    if fileExists(EXPORT_FILE) then
+      local prev = tryRead(EXPORT_FILE)
+      if prev then tryWrite(EXPORT_BACKUP, prev) end
+    end
+    if not tryWrite(EXPORT_FILE, encoded) then
+      message(game, "Export failed.\nCouldn't write\nthe export file.")
+      return
+    end
+    message(game, "BANK data was\nexported.")
+  end
+
+  local function applyImportedStorage(game, decoded)
+    storage = decoded
+    migrateStorage(storage)
+    normalizeBoxes(storage)
+    markDirty()
+    flushStorage()
+    message(game, "BANK data was\nimported.")
+  end
+
+  local function confirmImport(game, decoded)
+    game.stack:push(TextBox.new(game,
+      "Importing will\nreplace your\ncurrent BANK\ndata. OK?", function()
+      game.stack:push(ChoiceBox.new(game, function(yes)
+        if yes then applyImportedStorage(game, decoded) end
+      end, { defaultNo = true }))
+    end))
+  end
+
+  local function importBank(game)
+    if FileDialog.canDialog() then
+      local path = FileDialog.chooseOpen(
+        "Choose a POKéMON BANK export", "BANK data", "*.lua")
+      if not path then return end -- the player cancelled
+      local raw, err = FileDialog.readFile(path)
+      if not raw then
+        message(game, "Import failed.\nCouldn't read\nthat file.")
+        mod.log:warn("bank import failed: %s", tostring(err))
+        return
+      end
+      local decoded = SaveSerializer.decode(raw)
+      if type(decoded) ~= "table" or type(decoded.boxes) ~= "table" then
+        message(game, "That file isn't a\nvalid BANK export.")
+        return
+      end
+      confirmImport(game, decoded)
+      return
+    end
+    if not fileExists(EXPORT_FILE) then
+      message(game, "No export file\nwas found.")
+      return
+    end
+    local raw = tryRead(EXPORT_FILE)
+    local decoded = raw and SaveSerializer.decode(raw)
+    if type(decoded) ~= "table" or type(decoded.boxes) ~= "table" then
+      message(game, "That export file\nis invalid or\ncorrupted.")
+      return
+    end
+    confirmImport(game, decoded)
+  end
+
+  -- Removes every file this mod is known to have written under STORAGE_DIR, then the (by then empty) folder itself -- see KNOWN_STORAGE_FILES for why this isn't a directory listing.
+  local function wipeStorageDir()
+    local f = fs()
+    if type(f.getDirectoryItems) == "function" then
+      local ok, items = pcall(f.getDirectoryItems, STORAGE_DIR)
+      if ok and type(items) == "table" then
+        for _, name in ipairs(items) do
+          tryRemove(STORAGE_DIR .. "/" .. name)
+        end
+      end
+    else
+      for _, name in ipairs(KNOWN_STORAGE_FILES) do
+        tryRemove(STORAGE_DIR .. "/" .. name)
+      end
+    end
+    pcall(function() if f.remove then f.remove(STORAGE_DIR) end end)
+  end
+
+  local function performDelete(game)
+    wipeStorageDir()
+    storage = nil
+    dirty = false
+    message(game, "All BANK data\nwas deleted.")
+  end
+
+  -- Double confirmation; this loses every box, every item and all the stored money in one press, with no undo.
+  local function confirmDeleteBank(game)
+    game.stack:push(TextBox.new(game,
+      "Delete ALL BANK\ndata? POKéMON,\nITEMS and MONEY\nwill be lost.", function()
+      game.stack:push(ChoiceBox.new(game, function(yes)
+        if not yes then return end
+        game.stack:push(TextBox.new(game,
+          "Are you REALLY\nsure? This CANNOT\nbe undone.", function()
+          game.stack:push(ChoiceBox.new(game, function(yesAgain)
+            if yesAgain then performDelete(game) end
+          end, { defaultNo = true }))
+        end))
+      end, { defaultNo = true }))
+    end))
+  end
+
+  local function dataRows()
+    return {
+      { id = "vrm_pokemon_bank_export", label = "EXPORT DATA", activate = function(g) exportBank(g) end },
+      { id = "vrm_pokemon_bank_import", label = "IMPORT DATA", activate = function(g) importBank(g) end },
+      { id = "vrm_pokemon_bank_delete", label = "DELETE DATA", activate = function(g) confirmDeleteBank(g) end },
+    }
+  end
+
+  local DataScreen = {}
+  DataScreen.__index = DataScreen
+  DataScreen.isOpaque = true
+
+  function DataScreen:sgbPalettes(game)
+    return PaletteFX.wholeNamed(game.data, "MEWMON")
+  end
+
+  function DataScreen.new(game)
+    return setmetatable({
+      game = game, index = 1, scroll = 0, rows = dataRows(),
+      -- Gen1 Modern UI auto-adopts any screen built on OptionRows whose screenId ends in "Options"/"Settings" -- this does, so it needs no entry in mod.exports.gen1ModernUi.screens below.
+      screenId = DATA_SCREEN_ID,
+    }, DataScreen)
+  end
+
+  -- Modelled on OptionsMenu:update: same four-row viewport, cursor and BACK row as the menu this opens from. Every row here is activate-only (A), never step (Left/Right) -- DELETE DATA is not something a stray direction press should be able to reach.
+  function DataScreen:update()
+    local input = self.game.input
+    local rows = self.rows
+    local backRow = #rows + 1
+    if input:wasPressed("up") then
+      self.index = self.index > 1 and self.index - 1 or backRow
+    elseif input:wasPressed("down") then
+      self.index = self.index < backRow and self.index + 1 or 1
+    elseif input:wasPressed("a") then
+      local row = rows[self.index]
+      if row and row.activate then
+        row.activate(self.game)
+      else
+        self.game.stack:pop()
+      end
+    elseif input:wasPressed("b") or input:wasPressed("start") then
+      self.game.stack:pop()
+    end
+    self.scroll = OptionRows.clampScroll(self.index, self.scroll or 0, #rows, backRow)
+  end
+
+  function DataScreen:draw()
+    OptionRows.draw(self.game, self.rows, self.index, self.scroll or 0, "BACK", #self.rows + 1)
+  end
+
+  mod.content.screens:register(DATA_SCREEN_ID, { new = DataScreen.new })
+
+  -- Gen1 Modern UI reads a live ListMenu's index/scroll fields directly instead of faking D-pad presses, but the clamp-then-resync-scroll math is private to ListMenu (moveIndex/syncScroll are local there).
+  -- Mirrored here so a touch/mouse action can move a live list's cursor exactly the same way a real D-pad press would, without a copy of this logic in every lib/ module.
   local function syncListScroll(list)
     local rows = list.rows or 7
     if list.index - list.scroll > rows then list.scroll = list.index - rows end
@@ -234,11 +428,7 @@ return function(mod)
     syncListScroll(list)
   end
 
-  -- Gen1 Modern UI's row renderer reads a row's right-hand text off `value`,
-  -- while every ListMenu row here carries it as `right` (`value` is already
-  -- taken -- an internal id/index the row's onChoose needs, not display
-  -- text). Remap per row instead of passing `list.items` straight through,
-  -- or ids like an item's own id would print in place of its "x5" count.
+  -- Gen1 Modern UI's row renderer reads a row's right-hand text off `value`, while every ListMenu row here carries it as `right`. Remap per row instead of passing `list.items` straight through, or ids like an item's own id would print in place of its "x5" count.
   local function publicRows(list)
     local out = {}
     for i, row in ipairs(list.items) do
@@ -270,13 +460,17 @@ return function(mod)
     local items = Items.validateStorage(game)
     local changed = poke.changed or items.changed
     if changed then markDirty() end
+    -- lostItems merges both sources: a Pokémon's held item quarantined by Pokemon.validateStorage (an invalid mon.item) and a bank-item stack quarantined by Items.validateStorage -- both land in the same orphaned.items, so one combined list is what a player actually sees.
+    local lostItems = {}
+    for _, item in ipairs(poke.lostItems or {}) do lostItems[#lostItems + 1] = item end
+    for _, item in ipairs(items.lostItems or {}) do lostItems[#lostItems + 1] = item end
     return {
       changed = changed,
       pokemon = poke,
       items = items,
       report = {
         lostMons = poke.lostMons or {},
-        lostItems = items.lostItems or {},
+        lostItems = lostItems,
         restoredMons = poke.restoredMons or {},
         restoredItems = items.restoredItems or {}
       }
@@ -389,6 +583,9 @@ return function(mod)
   mod.hooks:wrap("ui.pc.items", function(next_, game, items)
     local out = next_(game, items)
     if type(out) ~= "table" then return out end
+    -- On Gold this hook fires on two different, already-nested screens (BILL's PC's own box menu, and the player's item PC).
+    -- Gold gets the row through the direct CenterPcMenu patch below instead, which is the only place it should appear there -- see that patch's own comment.
+    if GameVersion.generation() == 2 then return out end
     if not pcEntryEnabled() then return out end
     -- Nothing to open with every tab off -- drop the row instead of showing an empty chooser (or a chooser with nothing behind it).
     if not (Pokemon.tabEnabled() or Items.tabEnabled() or Money.tabEnabled()) then return out end
@@ -403,6 +600,60 @@ return function(mod)
       return out
     end
     return mod.ui.insertBefore(out, "PROF.OAK's PC", row)
+  end)
+
+  -- Gold's Pokémon Center PC selector has no hook of its own -- ui.pc.items above fires one level deeper there (Bill's own box menu, or the player's item PC), never on this top screen.
+  -- Patched directly, gated to a Gen 2 boot, so POKéMON BANK sits as a peer of BILL's PC / PROF.OAK's PC there -- CenterPcMenu is not one of Gen2Compat's served facades, so this is real engine-internals surgery, not an adapter call.
+  if GameVersion.generation() == 2 then
+    local ok, CenterPcMenu = pcall(require, "src.ui.gen2.CenterPcMenu")
+    if ok and type(CenterPcMenu) == "table" then
+      local ROW_ID = "vrm_pokemon_bank"
+      local origBuildEntries = CenterPcMenu.buildEntries
+      CenterPcMenu.buildEntries = function(self)
+        origBuildEntries(self)
+        if not pcEntryEnabled() then return end
+        if not (Pokemon.tabEnabled() or Items.tabEnabled() or Money.tabEnabled()) then return end
+        local entries = self.entries
+        local row = { id = ROW_ID, label = PC_MENU_LABEL }
+        if mod.options:get("pc_menu_first") == true then
+          table.insert(entries, 1, row)
+          return
+        end
+        -- Ahead of TURN OFF, which CenterPcMenu:buildEntries always appends last.
+        local pos = #entries + 1
+        for i, e in ipairs(entries) do
+          if e.id == "turnoff" then pos = i break end
+        end
+        table.insert(entries, pos, row)
+      end
+      local origChoose = CenterPcMenu.choose
+      CenterPcMenu.choose = function(self)
+        local entry = self.entries[self.index]
+        if entry and entry.id == ROW_ID then
+          self:playSfx("Sfx_ChoosePcOption")
+          openBankMenu(self.game)
+          return
+        end
+        return origChoose(self)
+      end
+    end
+  end
+
+  -- A second entry point, independent of SHOW IN PC MENU/pcEntryEnabled above: EXPORT/IMPORT/DELETE are maintenance actions on the Bank's own file, not something a run needs a PC for, so they sit on the game's OPTIONS menu instead of behind it.
+  mod.hooks:wrap("ui.options.rows", function(next_, game, rows)
+    local out = next_(game, rows)
+    if type(out) ~= "table" then return out end
+    local row = {
+      id = "vrm_pokemon_bank_data",
+      label = PC_MENU_LABEL,
+      activate = function(g) mod.ui.push(g, DATA_SCREEN_ID) end,
+    }
+    local hasMods = false
+    for _, r in ipairs(out) do
+      if r.label == "MODS" then hasMods = true break end
+    end
+    -- Anchored on MODS where it exists (Red/Blue/Yellow); Gold's OPTIONS menu has no MODS row at all -- insertBefore's own fallback would otherwise drop the row after CANCEL there, so this anchors on CANCEL instead, which Gold's row list does carry.
+    return mod.ui.insertBefore(out, hasMods and "MODS" or "CANCEL", row)
   end)
 
   mod.exports.open = function(game, tab)

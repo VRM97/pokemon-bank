@@ -1,7 +1,7 @@
 {
   "id": "vrm_pokemon_bank",
   "name": "Pokémon Bank",
-  "version": "1.7.1",
+  "version": "1.9.0",
   "api": 2,
   "entry": "main.lua",
   "profile": "content",
@@ -9,6 +9,7 @@
   "game_version": ">=0.0.0-0 <2.0.0",
   "priority": 100,
   "affects_link": false,
+  "games": ["gen1", "gen2"],
   "permissions": [
     "engine_internals"
   ],
