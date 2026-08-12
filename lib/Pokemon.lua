@@ -50,12 +50,33 @@ function Module.install(mod, core)
     if mon.item == nil then mon.item = mon.heldItem end
   end
 
+  -- An Egg's remaining incubation is Gold's mon.eggSteps or CRYSTAL_251's mon.eggCycles. Cycles only ever fall, on either side, so whichever of the two is smaller is always the one that's actually current.
+  -- CRYSTAL_251 also keeps the moves an Egg already inherited off mon.moves and stashes them on mon.eggMoves instead; Gold puts them straight on mon.moves from the moment the Egg is made and has no eggMoves field at all. Reshaped to whichever shape the destination expects, so a hatch on either side always finds the real moveset on mon.moves.
+  local function mirrorEggFields(mon)
+    if type(mon) ~= "table" or mon.isEgg ~= true then return end
+    local crystal251 = mod.find and mod.find("CRYSTAL_251")
+    if mon.eggSteps ~= nil or mon.eggCycles ~= nil then
+      local cycles = math.min(mon.eggSteps or mon.eggCycles, mon.eggCycles or mon.eggSteps)
+      mon.eggSteps, mon.eggCycles = cycles, cycles
+    end
+    if crystal251 and GameVersion.generation() == 1 then
+      if type(mon.moves) == "table" and #mon.moves > 0 then
+        mon.eggMoves = mon.eggMoves or mon.moves
+        mon.moves = {}
+      end
+    elseif type(mon.eggMoves) == "table" and #mon.eggMoves > 0
+        and (type(mon.moves) ~= "table" or #mon.moves == 0) then
+      mon.moves = mon.eggMoves
+    end
+  end
+
   -- Reshaped here, once, right before a withdrawn mon actually enters the currently active game -- recomputed with the target generation's own formula over the target generation's own base stats.
   local function reshapeForActiveGame(game, mon)
     if type(mon) ~= "table" then return mon end
     if mon.exp == nil then mon.exp = mon.experience end
     if mon.experience == nil then mon.experience = mon.exp end
     mirrorHeldItem(mon)
+    mirrorEggFields(mon)
     local def = game and game.data and game.data.pokemon and game.data.pokemon[mon.species]
     local baseStats = def and def.baseStats
     if not (baseStats and type(mon.stats) == "table") then return mon end
@@ -132,6 +153,9 @@ function Module.install(mod, core)
     if type(mon) ~= "table" or type(data) ~= "table" then return false end
     local pokemon = data.pokemon
     if type(pokemon) ~= "table" or not pokemon[mon.species] then return false end
+    if mon.isEgg and GameVersion.generation() == 1 and not (mod.find and mod.find("CRYSTAL_251")) then
+      return false
+    end
     local moves = data.moves
     if type(moves) ~= "table" then return false end
     if type(mon.moves) == "table" then

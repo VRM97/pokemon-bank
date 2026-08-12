@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.9.1
+
+**Eggs now cross generations too**, the same way a hatched Pokémon already did. Gold tracks an Egg's remaining incubation on `mon.eggSteps` and keeps its already-inherited moves on `mon.moves` from the moment it's made; CRYSTAL_251 tracks the same count on `mon.eggCycles` and keeps those moves out of sight on `mon.eggMoves` until it hatches, matching Crystal's own Day Care screen. Both are kept mirrored on withdraw (cycles only ever fall, on either side, so the smaller one is always the current one), and the moveset is reshaped onto whichever field the destination actually reads.
+
+An Egg is also **quarantined on a Gen 1 game that doesn't have CRYSTAL_251 installed**, the same as a Pokémon with an unknown species or move. Red/Blue/Yellow on their own have no Day Care breeding and nothing that understands `mon.isEgg`, so an Egg deposited from Gold or CRYSTAL_251 sits in the same invalid list until it's viewed from a game that actually knows what to do with it, then moves itself back automatically.
+
 ## 1.9.0
 
 Added Gold (Gen 2) support. Fixes were needed in three places:
