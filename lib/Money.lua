@@ -1,5 +1,6 @@
 local V = ...
 
+local GameVersion = require("src.core.GameVersion")
 local Strings = require("src.core.Strings")
 local Font = require("src.render.Font")
 local TextBox = require("src.render.TextBox")
@@ -27,6 +28,23 @@ function Module.install(mod, core)
 
   local function bankMoney()
     return loadStorage().money or 0
+  end
+
+  -- Gen1 keeps the wallet on save.money; Gen2 moves it to save.player.money instead.
+  local function walletMoney(game)
+    if GameVersion.generation() == 2 then
+      return (game.save.player and game.save.player.money) or 0
+    end
+    return game.save.money or 0
+  end
+
+  local function setWalletMoney(game, amount)
+    if GameVersion.generation() == 2 then
+      game.save.player = game.save.player or {}
+      game.save.player.money = amount
+    else
+      game.save.money = amount
+    end
   end
 
   local function depositMoney(amount)
@@ -162,7 +180,7 @@ function Module.install(mod, core)
   -- Money UI
   -- =========================================================================
   local function openDepositMoney(game)
-    local have = game.save.money or 0
+    local have = walletMoney(game)
     if have <= 0 then
       message(game, "You have no\nmoney to deposit!")
       return
@@ -174,7 +192,7 @@ function Module.install(mod, core)
       title = "DEPOSIT MONEY",
       onDone = function(amount)
         if not amount then return end
-        game.save.money = have - amount
+        setWalletMoney(game, have - amount)
         depositMoney(amount)
         mod.events:emit("mod.vrm_pokemon_bank.money_deposited", { amount = amount })
         playSound(game, "Withdraw_Deposit")
@@ -189,20 +207,21 @@ function Module.install(mod, core)
       message(game, "There's no\nmoney in the BANK!")
       return
     end
-    local room = MAX_MONEY - (game.save.money or 0)
+    local wallet = walletMoney(game)
+    local room = MAX_MONEY - wallet
     if room <= 0 then
       message(game, "Your money is\nfull!")
       return
     end
     game.stack:push(AmountBox.new(game, {
       max = math.min(have, room),
-      wallet = game.save.money or 0,
+      wallet = wallet,
       bank = have,
       title = "WITHDRAW MONEY",
       onDone = function(amount)
         if not amount then return end
         withdrawMoney(amount)
-        game.save.money = (game.save.money or 0) + amount
+        setWalletMoney(game, walletMoney(game) + amount)
         mod.events:emit("mod.vrm_pokemon_bank.money_withdrawn", { amount = amount })
         playSound(game, "Withdraw_Deposit")
         message(game, Strings("Withdrew\n¥%d.", amount))

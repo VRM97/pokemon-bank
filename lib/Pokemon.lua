@@ -70,6 +70,28 @@ function Module.install(mod, core)
     end
   end
 
+  -- Gen1 keeps a move's PP Up count on mon.moves[i].ppUps and recomputes the raised cap on every read; Gen2 instead stores that raised cap directly as mon.moves[i].maxPp and never keeps a ppUps counter at all.
+  local function reshapeMoves(game, mon)
+    local movesData = game and game.data and game.data.moves
+    if not (movesData and type(mon.moves) == "table") then return end
+    local gen = GameVersion.generation()
+    for _, mv in ipairs(mon.moves) do
+      if type(mv) == "table" and mv.id then
+        local def = movesData[mv.id]
+        if def then
+          local step = math.floor(def.pp / 5)
+          if gen == 2 then
+            if mv.maxPp == nil then
+              mv.maxPp = def.pp + (mv.ppUps or 0) * step
+            end
+          elseif mv.ppUps == nil and mv.maxPp then
+            mv.ppUps = step > 0 and math.max(0, math.min(3, math.floor((mv.maxPp - def.pp) / step + 0.5))) or 0
+          end
+        end
+      end
+    end
+  end
+
   local function stampTrainer(game, mon)
     if type(mon) ~= "table" then return end
     local player = game and game.save and game.save.player
@@ -98,12 +120,13 @@ function Module.install(mod, core)
     mirrorHeldItem(mon)
     mirrorEggFields(mon)
     stampEggTrainer(game, mon)
+    reshapeMoves(game, mon)
     local def = game and game.data and game.data.pokemon and game.data.pokemon[mon.species]
     local baseStats = def and def.baseStats
     if not (baseStats and type(mon.stats) == "table") then return mon end
     if GameVersion.generation() == 2 then
+      local Mon = require("src.battle.gen2.Mon")
       if baseStats.specialAttack and (mon.stats.specialAttack == nil or mon.stats.specialDefense == nil) then
-        local Mon = require("src.battle.gen2.Mon")
         local computed = Mon.stats(baseStats, mon.dvs or {}, mon.level or 1, mon.statExp)
         mon.stats.specialAttack = mon.stats.specialAttack or computed.specialAttack
         mon.stats.specialDefense = mon.stats.specialDefense or computed.specialDefense
@@ -111,6 +134,7 @@ function Module.install(mod, core)
       if mon.maxHp == nil then mon.maxHp = mon.stats.hp end
       if mon.types == nil then mon.types = def.types end
       if mon.catchRate == nil then mon.catchRate = def.catchRate end
+      if mon.gender == nil then mon.gender = Mon.gender(def, mon.dvs or {}, { species = mon.species, level = mon.level }) end
     else
       if mon.stats.special == nil and baseStats.special then
         mon.stats.special = Stats.calc(def, mon.level or 1, mon.dvs or {}, mon.statExp).special
@@ -1100,6 +1124,10 @@ function Module.install(mod, core)
     return isValidPokemon(mon, game and game.data)
   end
   mod.exports.validatePokemonStorage = function(game) return validateStorage(game) end
+
+  mod.exports.reshapeForActiveGame = function(game, mon) return reshapeForActiveGame(game, mon) end
+  mod.exports.reshapeMoves = function(game, mon) return reshapeMoves(game, mon) end
+
   mod.exports.listInvalidPokemon = function() return listInvalidMons() end
   mod.exports.invalidPokemonCount = function() return invalidMonCount() end
 

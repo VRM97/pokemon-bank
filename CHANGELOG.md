@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.9.3
+
+**A move's PP Up bonus now survives a cross-generation withdrawal too.** Gen 1 keeps a move's PP Up count on `ppUps` and recomputes the raised cap on every read, Gen 2 instead stores that raised cap directly as `maxPp` and never keeps a `ppUps` counter at all.
+
+**A Gen 1 Pokémon now gets a gender the moment it's withdrawn into Gold.** Gender is a Gen 2 mechanic with no equivalent on Red/Blue/Yellow, so a Pokémon deposited from any of those carries no `gender` field at all. Withdrawing it into Gold now rolls one from the same rule the cart itself uses -- the Attack DV against the species' `genderRatio` (`src/battle/gen2/Mon.lua`'s `Mon.gender`) -- the same place `stats.specialAttack`/`specialDefense` are already backfilled. A Pokémon that already has a `gender` (caught on Gold, or withdrawn there before) is left alone.
+
+**MONEY tab now works correctly on Gold.** Gen 2 keeps the wallet on `save.player.money`, not `save.money` like Gen 1 -- DEPOSIT MONEY/WITHDRAW MONEY were reading and writing a field that doesn't exist on a Gold save, so the wallet balance shown was always ¥0 and nothing actually moved. Both now check the active save's generation and hit the right field.
+
+**A stray `save.money` left on a Gen2 save by an older version of this mod will be recovered on load.** Before the MONEY tab fix above, a deposit made on a Gold save wrote to `save.money`, a field Gold never reads. The startup validation pass now finds it, moves it into the Bank, deletes the stray field, and shows the player a short notice.
+
+New exported **`reshapeForActiveGame`/`reshapeMoves` (see API.md), so a mod that moves a Pokémon between generations on its own path can still get the same stat/move/gender backfill instead of reimplementing it.
+
 ## 1.9.2
 
 **Withdrawing an Egg now stamps it to whoever withdrew it.** Gold's own Day Care sets an Egg's OT once, at creation, and its hatch (`Breeding.hatch`) keeps whatever is already there rather than re-checking -- correct for an Egg that's never left its own save, wrong for one pulled out of the Bank, where the trainer who's actually going to walk it to hatch is whoever just withdrew it, not whoever was running the Day Care when it was laid. `ot`/`otId`/`otName` are re-stamped to the withdrawing trainer the moment it leaves the Bank. CRYSTAL_251's own hatch already re-stamps regardless of what the Egg carries in, so this only changes anything for Gold's Day Care. This one is unconditional, unlike **INHERIT TRAINER** below -- an Egg always gets the withdrawing trainer, whatever that option is set to.

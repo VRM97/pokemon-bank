@@ -28,6 +28,7 @@ return function(mod)
   local TextBox = require("src.render.TextBox")
   local ChoiceBox = require("src.ui.ChoiceBox")
   local GameVersion = require("src.core.GameVersion")
+  local Strings = require("src.core.Strings")
   -- -----------------------------------------------------------------------
   -- Persistence
   -- -----------------------------------------------------------------------
@@ -426,11 +427,22 @@ return function(mod)
 
   local QuarantineReport = require("src.ui.QuarantineReport")
 
+  local function migrateLegacyGen2Money(game)
+    if GameVersion.generation() ~= 2 then return 0 end
+    local save = game and game.save
+    if not save or save.money == nil then return 0 end
+    local amount = math.max(0, math.floor(tonumber(save.money) or 0))
+    save.money = nil
+    if amount > 0 then mod.exports.depositMoney(amount) end
+    return amount
+  end
+
   local function validateBankStorage(game)
     if not (game and game.data) then return nil end
     loadStorage()
     local poke = Pokemon.validateStorage(game)
     local items = Items.validateStorage(game)
+    local recoveredMoney = migrateLegacyGen2Money(game)
     local changed = poke.changed or items.changed
     if changed then markDirty() end
     -- lostItems merges both sources: a Pokémon's held item quarantined by Pokemon.validateStorage (an invalid mon.item) and a bank-item stack quarantined by Items.validateStorage -- both land in the same orphaned.items, so one combined list is what a player actually sees.
@@ -441,6 +453,7 @@ return function(mod)
       changed = changed,
       pokemon = poke,
       items = items,
+      recoveredMoney = recoveredMoney,
       report = {
         lostMons = poke.lostMons or {},
         lostItems = lostItems,
@@ -525,6 +538,10 @@ return function(mod)
     local result = validateBankStorage(game)
     if result and result.report and result.changed then
       game.stack:push(QuarantineReport.new(game, result.report))
+    end
+    if result and result.recoveredMoney and result.recoveredMoney > 0 then
+      game.stack:push(TextBox.new(game,
+        Strings("¥%d from an older\nBANK version was\nmoved to the BANK.", result.recoveredMoney)))
     end
   end)
 

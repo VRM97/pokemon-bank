@@ -1,7 +1,7 @@
 {
   "id": "vrm_pokemon_bank",
   "name": "Pokémon Bank",
-  "version": "1.9.2",
+  "version": "1.9.3",
   "api": 2,
   "entry": "main.lua",
   "profile": "content",
