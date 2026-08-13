@@ -37,6 +37,8 @@ Practically: don't cache a `{ box, index }` pair across a turn boundary, an even
 - `invalidPokemonCount()` -- how many mons are in `orphaned.mons`.
 - `boxCount()` -- see **Box numbering** above.
 - `boxCapacity()` -- slots per box (currently 20; do not hardcode it).
+- `reshapeForActiveGame(game, mon)` -- the cross-generation backfill this mod's own `withdrawPokemon`/`withdrawToParty`/`withdrawToBox` already run before a mon leaves the Bank: mirrors `exp`/`experience`, mirrors CRYSTAL_251's `heldItem`/Gold's `item`, mirrors Egg incubation/moves, reshapes `moves[i].ppUps`/`maxPp` (see `reshapeMoves` below), and splits/recomputes `stats.specialAttack`/`specialDefense`, backfills `maxHp`/`types`/`catchRate` from `game.data.pokemon`, and rolls a `gender` from the Attack DV/`genderRatio` rule when the mon doesn't have one yet (a Gen 1 mon never does). Mutates and returns `mon`. For a mod that moves a Pokémon between generations on its own path (bypassing this mod's withdraw calls entirely), calling this first gets the same treatment instead of reimplementing it.
+- `reshapeMoves(game, mon)` -- just the move-PP piece of the above, in case a mod only needs that: Gen 1 keeps a move's bonus PP on `ppUps` and recomputes the cap on every read, Gen 2 stores the raised cap directly on `maxPp` and keeps no `ppUps` counter; this fills in whichever field the active generation expects from whichever one the mon already carries. Mutates `mon.moves` in place; returns nothing.
 
 ## Items
 
@@ -54,12 +56,12 @@ Practically: don't cache a `{ box, index }` pair across a turn boundary, an even
 
 ## Money
 
-Same asymmetry as `depositItem`/`withdrawItem`: these only change the Bank's own balance. Neither touches `game.save.money` -- debit/credit whatever wallet you mean yourself (mirrors what this mod's own DEPOSIT MONEY/WITHDRAW MONEY do).
+Same asymmetry as `depositItem`/`withdrawItem`: these only change the Bank's own balance. Neither touches the save's own wallet (`game.save.money` on Gen1, `game.save.player.money` on Gen2) -- debit/credit whatever wallet you mean yourself (mirrors what this mod's own DEPOSIT MONEY/WITHDRAW MONEY do, which already branch on `GameVersion.generation()` to hit the right field).
 
-- `bankMoney()` -- the Bank's own money balance, independent of any save's `game.save.money`.
+- `bankMoney()` -- the Bank's own money balance, independent of any save's wallet.
 - `depositMoney(amount)` -- adds `amount` to the Bank's balance. Returns `true`, or `false, "bad request"` for an `amount <= 0`.
 - `withdrawMoney(amount)` -- subtracts `amount` from the Bank's balance. Returns `true`, or `false, "not enough"` for an `amount <= 0` or greater than `bankMoney()`.
-- `maxMoney` -- `999999`, the game's own money cap (`GenSave.lua`'s 3-byte BCD `O.money` field). Not enforced by `depositMoney`/`withdrawMoney` themselves (the Bank's own balance is a plain number, uncapped) -- only relevant if you're about to add the withdrawn amount to `game.save.money`, the same way this mod's own WITHDRAW MONEY caps itself against it first.
+- `maxMoney` -- `999999`, the game's own money cap. Not enforced by `depositMoney`/`withdrawMoney` themselves (the Bank's own balance is a plain number, uncapped) -- only relevant if you're about to add the withdrawn amount to the save's wallet, the same way this mod's own WITHDRAW MONEY caps itself against it first.
 
 ## Persistence
 
