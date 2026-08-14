@@ -5,6 +5,7 @@ local Strings = require("src.core.Strings")
 local Font = require("src.render.Font")
 local TextBox = require("src.render.TextBox")
 local Menu = require("src.ui.Menu")
+local Theme = require("src.ui.Theme")
 
 local SCREEN_ID = "PokemonBankMoney"
 local AMOUNT_SCREEN_ID = "PokemonBankMoneyAmount"
@@ -77,13 +78,13 @@ function Module.install(mod, core)
     local self = setmetatable({}, AmountBox)
     self.game = game
     self.max = math.max(1, math.floor(opts.max or 1))
-    self.amount = math.min(math.max(1, math.floor(opts.start or 1)), self.max)
+    self.digitCount = #tostring(self.max)
     self.wallet = math.floor(opts.wallet or 0)
     self.bank = math.floor(opts.bank or 0)
     self.onDone = opts.onDone -- onDone(amount | nil on cancel)
-    -- opts.title is display-only, read by gen1ModernUi below -- the native
-    -- draw never shows one (see draw(), just the MONEY/BANK/amount box).
     self.title = opts.title
+    self:setAmount(opts.start or 1)
+    self.pos = self.digitCount
 
     -- Gen1 Modern UI compatibility surface.
     self.screenId = AMOUNT_SCREEN_ID
@@ -99,10 +100,10 @@ function Module.install(mod, core)
       index = function() return 3 end,
       scroll = function() return 0 end,
       footer = function() return "A OK   B CANCEL" end,
-      up = function() self:stepUp() end,
-      down = function() self:stepDown() end,
-      left = function() self:pageLeft() end,
-      right = function() self:pageRight() end,
+      up = function() self:stepDigit(1) end,
+      down = function() self:stepDigit(-1) end,
+      left = function() self:moveCursor(-1) end,
+      right = function() self:moveCursor(1) end,
       select = function() self:confirm() end,
       back = function() self:cancel() end,
       start = function() self:jumpMax() end,
@@ -110,18 +111,34 @@ function Module.install(mod, core)
     return self
   end
 
-  local function wrapAmount(v, max)
-    if v < 1 then return max end
-    if v > max then return 1 end
-    return v
+  local function composeDigits(digits, digitCount)
+    local n = 0
+    for i = 1, digitCount do n = n * 10 + digits[i] end
+    return n
+  end
+
+  function AmountBox:setAmount(amount)
+    amount = math.min(self.max, math.max(1, math.floor(amount)))
+    self.amount = amount
+    local digits = {}
+    for i = self.digitCount, 1, -1 do
+      digits[i] = amount % 10
+      amount = math.floor(amount / 10)
+    end
+    self.digits = digits
   end
 
   -- Each step is its own method, shared by :update's own D-pad handling below and the gen1ModernUi actions above, so a touch/mouse control does exactly what the matching button does.
-  function AmountBox:stepUp() self.amount = wrapAmount(self.amount + 1, self.max) end
-  function AmountBox:stepDown() self.amount = wrapAmount(self.amount - 1, self.max) end
-  function AmountBox:pageRight() self.amount = math.min(self.max, self.amount + 100) end
-  function AmountBox:pageLeft() self.amount = math.max(1, self.amount - 100) end
-  function AmountBox:jumpMax() self.amount = self.max end
+  function AmountBox:stepDigit(delta)
+    self.digits[self.pos] = (self.digits[self.pos] + delta) % 10
+    self:setAmount(composeDigits(self.digits, self.digitCount))
+  end
+
+  function AmountBox:moveCursor(delta)
+    self.pos = ((self.pos - 1 + delta) % self.digitCount) + 1
+  end
+
+  function AmountBox:jumpMax() self:setAmount(self.max) end
 
   function AmountBox:confirm()
     self.game.stack:pop()
@@ -136,13 +153,13 @@ function Module.install(mod, core)
   function AmountBox:update(dt)
     local input = self.game.input
     if input:wasPressed("up") then
-      self:stepUp()
+      self:stepDigit(1)
     elseif input:wasPressed("down") then
-      self:stepDown()
+      self:stepDigit(-1)
     elseif input:wasPressed("right") then
-      self:pageRight()
+      self:moveCursor(1)
     elseif input:wasPressed("left") then
-      self:pageLeft()
+      self:moveCursor(-1)
     elseif input:wasPressed("start") then
       self:jumpMax()
     elseif input:wasPressed("a") then
@@ -155,7 +172,8 @@ function Module.install(mod, core)
   function AmountBox:draw()
     local moneyVal = ("¥%d"):format(self.wallet)
     local bankVal = ("¥%d"):format(self.bank)
-    local amountVal = ("¥%d"):format(self.amount)
+    local digitsStr = table.concat(self.digits)
+    local amountVal = "¥" .. digitsStr
     local moneyLabel, bankLabel = "MONEY", "BANK"
     local gap = 1 -- min blank column between a left label and its right-aligned value
     local interior = math.max(
@@ -166,13 +184,16 @@ function Module.install(mod, core)
     local tw = interior + 2
     local tx = math.max(0, 20 - tw)
     local ty = 9
-    Font.drawBox(tx, ty, tw, 5)
+    Font.drawBox(tx, ty, tw, 6)
     love.graphics.setColor(0, 0, 0, 1)
     Font.draw(moneyLabel, (tx + 1) * 8, (ty + 1) * 8)
     Font.draw(bankLabel, (tx + 1) * 8, (ty + 2) * 8)
     Font.draw(moneyVal, 160 - 8 - Font.width(moneyVal), (ty + 1) * 8)
     Font.draw(bankVal, 160 - 8 - Font.width(bankVal), (ty + 2) * 8)
-    Font.draw(amountVal, 160 - 8 - Font.width(amountVal), (ty + 3) * 8)
+    local amountX = 160 - 8 - Font.width(amountVal)
+    Font.draw(amountVal, amountX, (ty + 3) * 8)
+    local cursorX = amountX + Font.width("¥" .. digitsStr:sub(1, self.pos - 1))
+    Font.drawCode(Theme.moreArrow, cursorX, (ty + 4) * 8)
     love.graphics.setColor(1, 1, 1, 1)
   end
 
