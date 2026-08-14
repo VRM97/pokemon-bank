@@ -11,6 +11,7 @@ local DATA_SCREEN_ID = "PokemonBankDataOptions"
 local KNOWN_STORAGE_FILES = {
   "storage.lua", "storage.lua.bak", "storage.lua.tmp",
   "export.lua", "export.lua.bak",
+  "stats.lua", "stats.lua.bak", "stats.lua.tmp",
 }
 
 return function(mod)
@@ -198,15 +199,6 @@ return function(mod)
     dirty = false
   end
 
-  -- Ties the Bank's own disk write to the game's. A veto earlier in the save.write chain (an ephemeral tool session, source/docs/modding.md) means the save itself won't happen, so the Bank doesn't flush either.
-  mod.hooks:wrap("save.write", function(next_, game)
-    local proceed = next_(game)
-    if proceed ~= false then
-      flushStorage()
-    end
-    return proceed
-  end)
-
   -- Modules require each other through V rather than package.path: a mod directory is not on it, and may live inside a mounted .love archive that plain require cannot reach. Mirrors vrm_unified_pc_system's own loader (and vrm_summary_overhaul's/vrm_battle_helper's).
   local modules = {}
   local function chunkFor(rel)
@@ -230,6 +222,8 @@ return function(mod)
   end
 
   local FileDialog = V.require("FileDialog")
+  -- Forward-declared: installed further down (after Pokemon/Items/Money), but DATA_SCREEN_ID's VIEW STATS row and the gen1ModernUi screens table below both need to reference it before that point.
+  local Stats
 
   local function message(game, text)
     game.stack:push(TextBox.new(game, text))
@@ -342,6 +336,7 @@ return function(mod)
     wipeStorageDir()
     storage = nil
     dirty = false
+    Stats.reset()
     message(game, "All BANK data\nwas deleted.")
   end
 
@@ -365,16 +360,13 @@ return function(mod)
   mod.content.screens:register(DATA_SCREEN_ID, {
     new = function(game)
       local items = {
+        { label = "VIEW STATS", onSelect = function() mod.ui.push(game, Stats.screenId) end },
         { label = "EXPORT DATA", onSelect = function() exportBank(game) end },
         { label = "IMPORT DATA", onSelect = function() importBank(game) end },
         { label = "DELETE DATA", onSelect = function() confirmDeleteBank(game) end },
         { label = "CANCEL" },
       }
       return mod.ui.ListMenu.new(game, PC_MENU_LABEL, items, {
-        -- Only CANCEL (no onSelect) closes the screen; EXPORT/IMPORT/DELETE
-        -- push their own message/confirmation on top and leave this list
-        -- underneath, so choosing again after dismissing one doesn't require
-        -- reopening POKéMON BANK from OPTIONS.
         onChoose = function(item, menu)
           if not item then return end
           if item.onSelect then
@@ -426,11 +418,27 @@ return function(mod)
     moveListCursor = moveListCursor,
     setListCursor = setListCursor,
     publicRows = publicRows,
+    fs = fs,
+    fileExists = fileExists,
+    tryRead = tryRead,
+    tryWrite = tryWrite,
+    tryRemove = tryRemove,
+    STORAGE_DIR = STORAGE_DIR,
   }
 
   local Pokemon = V.require("Pokemon").install(mod, core)
   local Items = V.require("Items").install(mod, core)
   local Money = V.require("Money").install(mod, core)
+  Stats = V.require("Stats").install(mod, core)
+
+  mod.hooks:wrap("save.write", function(next_, game)
+    local proceed = next_(game)
+    if proceed ~= false then
+      flushStorage()
+      Stats.flush()
+    end
+    return proceed
+  end)
 
   local QuarantineReport = require("src.ui.QuarantineReport")
 
@@ -698,8 +706,9 @@ return function(mod)
   mod.exports.isPcEntryEnabled = function() return pcEntryEnabled() end
 
   mod.exports.flush = function()
-    local was = dirty
+    local was = dirty or Stats.isDirty()
     flushStorage()
+    Stats.flush()
     return was
   end
 

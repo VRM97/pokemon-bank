@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.9.5
+
+**DEPOSIT MONEY/WITHDRAW MONEY now enter the amount one digit at a time**: Up/Down cycles the digit under the cursor (0-9), Left/Right moves the cursor to another digit. START still jumps straight to the max.
+
+New **VIEW STATS** row on the game's own OPTIONS > POKéMON BANK page, tracking every deposit, withdrawal, release, item transfer and money transfer the Bank has ever handled: total actions, Pokémon/items/money in and out, the Bank's all-time peak balance and its most-deposited species. SELECT toggles between the shared Bank's all-time totals and just the active save's own contribution to them.
+
+The all-time totals live in their own file, `stats.lua`, alongside `storage.lua` -- independent of any save, same backup-and-staged-write discipline. Deleting the Bank's data (DELETE DATA) resets them too. Each save's own contribution is written into that save's own `modData` instead, so it travels and rewinds with the save the normal way.
+
+New exported **`getBankStats()`**/**`getSaveStats()`** and **`statsScreenId`** -- see API.md.
+
 ## 1.9.4
 
 **Key items can no longer be deposited or tossed on Gold.** The Bank's blacklist check only ever looked at `def.keyItem`, so on a Gold save it always read `nil` and every key item (Bicycle, Card Key, Itemfinder...) was depositable through DEPOSIT ITEM/MOVE ITEM and tossable through MOVE ITEM's TOSS. Gold's extracted item records classify by `def.pocket == "KEY_ITEM"`. Both fields are checked now.

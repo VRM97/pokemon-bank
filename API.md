@@ -76,6 +76,16 @@ On every `save.loaded`, this mod runs `validateStorage(game)` automatically (Pok
 - `validateStorage(game)` -- the combined pass this mod runs on load: calls `validatePokemonStorage` and `validateItemsStorage`, marks the Bank dirty when either reports `changed`, returns `{ changed, pokemon, items, message }` (`message` is a player-facing summary string, or `nil` when nothing moved).
 - `flush()` -- forces the pending write immediately instead of waiting for the next save. Returns whether anything was actually pending. Normally unnecessary; reach for it only when a mod has its own reason a Bank change must be durable before the game's own save point (e.g. right before code that risks the process, like a native file-picker call).
 
+## Statistics
+
+Every deposit, withdrawal, release and item/money transfer is tallied two ways: an all-time total shared by every save that ever used this Bank (`stats.lua`, next to `storage.lua`), and a per-save total scoped to just the active playthrough (written into that save's own `modData`, so it travels and rewinds with the save). Both share the same shape: `{ transactions, pokemon = { deposited, withdrawn, released }, items = { depositedOps, depositedQty, withdrawnOps, withdrawnQty, tossedOps, tossedQty }, money = { depositedOps, depositedTotal, withdrawnOps, withdrawnTotal } }`.
+
+- `getBankStats()` -- the all-time totals above, plus `peakMoney` (the Bank's own highest-ever balance) and `species` (a `{ speciesId = timesDeposited }` table). A copy, not a live reference.
+- `getSaveStats()` -- the active save's own contribution to those same totals, without `peakMoney`/`species` (those only mean something at the shared-Bank level). A copy, not a live reference.
+- `statsScreenId` -- the registered screen id (`mod.content.screens`) behind the **VIEW STATS** row on the OPTIONS > POKéMON BANK page (see README.md), for a mod that wants to push it through its own navigation.
+
+DELETE DATA resets the all-time totals along with everything else in the Bank; a save's own totals aren't part of that, since they live in the save, not the Bank.
+
 ## PC menu entry
 
 Pokémon Bank adds a **POKéMON BANK** row to the PC's own main menu (the one offering BILL's PC / Player's PC / PROF.OAK's PC / LOG OFF) through the `ui.pc.items` hook. Two independent ways to control it:
