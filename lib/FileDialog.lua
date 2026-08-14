@@ -1,5 +1,7 @@
 local V = ... -- unused: no other lib/ module needed here, kept for the same header shape every lib/ file in this mod has
 
+-- Currently inert: the mod sandbox removes iolib entirely and blocks love.system, both unconditionally regardless of permissions, so haveShell/haveFiles and osName below are always false/nil and canDialog() always returns false.
+-- Every caller already has a working fixed-file fallback for that case, so this stays harmless rather than being removed.
 local FileDialog = {}
 
 local function haveShell()

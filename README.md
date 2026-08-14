@@ -60,11 +60,11 @@ The Bank's all-time stats (**VIEW STATS** above) follow the exact same rule, in 
 
 The game's own **OPTIONS** menu has a **POKéMON BANK** row, independent of **SHOW IN PC MENU** -- it opens a page with four actions:
 - **VIEW STATS** shows a running log of every deposit, withdrawal, release and item/money transfer the Bank has ever handled: total actions, Pokémon/items/money in and out, the Bank's all-time peak balance and its most-deposited species. SELECT switches between the shared Bank's all-time totals (every save that ever used it) and just the save you're currently playing's own contribution to them.
-- **EXPORT DATA** opens your device's own file dialog (Windows/macOS/Linux) so you can save the Bank's entire contents wherever you like, as a `.lua` file. Where no dialog is available (mobile, consoles), it writes to `bank/export.lua` instead, rolling any file already there into `bank/export.lua.bak` first so exporting again never loses the previous one.
-- **IMPORT DATA** opens the same dialog to pick a file to load and, after you confirm, **replaces the Bank's current contents with it** -- anything deposited since that export was made is gone. Without a dialog, it reads `bank/export.lua` back in instead.
+- **EXPORT DATA** writes the Bank's entire contents to `bank/export.lua`, as a `.lua` file, rolling any file already there into `bank/export.lua.bak` first so exporting again never loses the previous one.
+- **IMPORT DATA** reads `bank/export.lua` back in and, after you confirm, **replaces the Bank's current contents with it** -- anything deposited since that export was made is gone.
 - **DELETE DATA** erases the Bank's storage folder entirely -- every box, item, stored ¥, any leftover export files, and the all-time stats above -- back to nothing. Since there's no way to get any of it back afterward, it's the only Bank action that asks **twice** before going through, unlike the single confirmation RELEASE PKMN or TOSS ITEM ask for. Each save's own stats aren't part of this -- they live in that save's own data, not the Bank's, so deleting the Bank doesn't erase what a save has already done with it.
 
-The file dialog **blocks the game** while it's open, the same as choosing a ROM to import does. EXPORT/IMPORT/DELETE all take effect on disk immediately rather than waiting for the next save, unlike a normal deposit/withdraw (see **Where the data lives** above).
+EXPORT/IMPORT/DELETE all take effect on disk immediately rather than waiting for the next save, unlike a normal deposit/withdraw (see **Where the data lives** above).
 
 ## For mod authors
 

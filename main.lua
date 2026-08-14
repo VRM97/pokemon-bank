@@ -40,8 +40,9 @@ return function(mod)
   -- -----------------------------------------------------------------------
   -- Persistence
   -- -----------------------------------------------------------------------
+  -- SaveData.persistenceFs: the mod's own love facade blocks .filesystem, but this resolves the same standard/portable backend from inside the engine, where that block doesn't apply.
   local function fs()
-    return SaveData.portableFs() or love.filesystem
+    return SaveData.persistenceFs()
   end
 
   local function fileExists(name)
@@ -229,8 +230,7 @@ return function(mod)
     game.stack:push(TextBox.new(game, text))
   end
 
-  -- EXPORT DATA/IMPORT DATA (the OPTIONS menu screen below) prefer the host's own native file dialog: the player picks exactly where the file goes, same as any other app.
-  -- Where no dialog can be opened (mobile, consoles) they fall back to a fixed file next to STORAGE_FILE -- rolling any previous export into EXPORT_BACKUP first, so exporting again never loses the one before it.
+  -- EXPORT DATA/IMPORT DATA (the OPTIONS menu screen below) would prefer the host's own native file dialog, but FileDialog.canDialog() is always false under the mod sandbox (no io, no love.system) -- see FileDialog.lua's own header. They always take the fixed-file path below: a file next to STORAGE_FILE, rolling any previous export into EXPORT_BACKUP first so exporting again never loses the one before it.
   local function exportBank(game)
     loadStorage()
     local ok, encoded = pcall(SaveSerializer.encode, storage)

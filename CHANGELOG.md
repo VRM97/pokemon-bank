@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.9.6
+
+**Fixed: the Bank never actually saved outside of a portable install.** `fs()` fell back to `love.filesystem` directly, which the mod sandbox blocks. It now resolves the same standard/portable backend through `SaveData.persistenceFs()` instead, which isn't blocked.
+
+**Corrected: EXPORT DATA/IMPORT DATA never actually opened a native file dialog.** The same sandbox blocks the raw `io`/`love.system` calls that would have opened one, on every platform, so both actions have always just used the fixed `bank/export.lua` file.
+
 ## 1.9.5
 
 **DEPOSIT MONEY/WITHDRAW MONEY now enter the amount one digit at a time**: Up/Down cycles the digit under the cursor (0-9), Left/Right moves the cursor to another digit. START still jumps straight to the max.
