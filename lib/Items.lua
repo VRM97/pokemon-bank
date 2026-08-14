@@ -33,10 +33,14 @@ function Module.install(mod, core)
     return type(id) == "string" and id:find("^HM_") ~= nil
   end
 
+  local function isKeyItem(def)
+    return def ~= nil and (def.keyItem == true or def.pocket == "KEY_ITEM")
+  end
+
   local function isBlacklisted(id, def)
     if extraBlacklist[id] then return true end
     if isHM(id) then return true end
-    if def and def.keyItem then return true end
+    if isKeyItem(def) then return true end
     return false
   end
 
@@ -415,7 +419,7 @@ function Module.install(mod, core)
       end
       if state.view ~= "bank" then
         local def = game.data.items[id]
-        if (def and def.keyItem) or isHM(id) then
+        if isKeyItem(def) or isHM(id) then
           list.footer = "That's too impor-\ntant to toss!"
           return
         end
