@@ -42,6 +42,49 @@ function Module.install(mod, core)
     return mon
   end
 
+  local function healMon(game, mon)
+    if type(mon) ~= "table" then return mon end
+    if type(mon.stats) == "table" and mon.stats.hp then mon.hp = mon.stats.hp end
+    mon.status = nil
+    mon.statusTurns = nil
+    mon.toxicCounter = nil
+    local movesData = game and game.data and game.data.moves
+    if movesData and type(mon.moves) == "table" then
+      local gen = GameVersion.generation()
+      for _, mv in ipairs(mon.moves) do
+        if type(mv) == "table" and mv.id then
+          local def = movesData[mv.id]
+          if def then
+            if gen == 2 then
+              mv.pp = mv.maxPp or def.pp
+            else
+              mv.pp = def.pp + (mv.ppUps or 0) * math.floor(def.pp / 5)
+            end
+          end
+        end
+      end
+    end
+    return mon
+  end
+
+  local function healBank(game)
+    if not (game and game.data) then return 0 end
+    local s = loadStorage()
+    local count = 0
+    for _, box in ipairs(s.boxes) do
+      for _, mon in ipairs(box) do
+        healMon(game, mon)
+        count = count + 1
+      end
+    end
+    if count > 0 then markDirty() end
+    return count
+  end
+
+  local function autoHealMon(trigger, game, mon)
+    if game and mod.options:get("auto_heal") == trigger then healMon(game, mon) end
+  end
+
   -- CRYSTAL_251 gives a mon its own held item on mon.heldItem instead of Gold's mon.item. Mirrored both ways the same way exp/experience are, but only when that mod is actually installed and loaded.
   local function mirrorHeldItem(mon)
     local crystal251 = mod.find and mod.find("CRYSTAL_251")
@@ -92,6 +135,20 @@ function Module.install(mod, core)
     end
   end
 
+  local STATUS_TO_GEN2 = { SLP = "sleep", PSN = "poison", BRN = "burn", FRZ = "freeze", PAR = "paralyze" }
+  local STATUS_TO_GEN1 = { sleep = "SLP", poison = "PSN", toxic = "PSN", burn = "BRN", freeze = "FRZ", paralyze = "PAR" }
+
+  local function reshapeStatus(mon)
+    if type(mon) ~= "table" or mon.status == nil then return end
+    if GameVersion.generation() == 2 then
+      mon.status = STATUS_TO_GEN2[mon.status] or mon.status
+    else
+      mon.status = STATUS_TO_GEN1[mon.status] or mon.status
+      mon.statusTurns = nil
+      mon.toxicCounter = nil
+    end
+  end
+
   local function stampTrainer(game, mon)
     if type(mon) ~= "table" then return end
     local player = game and game.save and game.save.player
@@ -117,6 +174,7 @@ function Module.install(mod, core)
     if type(mon) ~= "table" then return mon end
     if mon.exp == nil then mon.exp = mon.experience end
     if mon.experience == nil then mon.experience = mon.exp end
+    reshapeStatus(mon)
     mirrorHeldItem(mon)
     mirrorEggFields(mon)
     stampEggTrainer(game, mon)
@@ -418,6 +476,7 @@ function Module.install(mod, core)
           markDirty()
           reshapeForActiveGame(game, mon)
           stampNewTrainer(game, mon)
+          autoHealMon("withdraw", game, mon)
           table.insert(game.save.party, mon)
           registerDex(game, mon.species)
           mod.events:emit("mod.vrm_pokemon_bank.pokemon_withdrawn",
@@ -452,6 +511,7 @@ function Module.install(mod, core)
           end
           table.remove(game.save.party, item.value)
           ensureStats(game, mon)
+          autoHealMon("deposit", game, mon)
           local boxNum, slot = depositMon(mon)
           mod.events:emit("mod.vrm_pokemon_bank.pokemon_deposited",
             { box = boxNum, index = slot, mon = mon })
@@ -1075,7 +1135,10 @@ function Module.install(mod, core)
   mod.exports.depositPokemon = function(mon, opts)
     if type(mon) ~= "table" then return nil, "invalid pokemon" end
     opts = opts or {}
-    if opts.game then ensureStats(opts.game, mon) end
+    if opts.game then
+      ensureStats(opts.game, mon)
+      autoHealMon("deposit", opts.game, mon)
+    end
     local boxNum, slot = depositMon(mon)
     mod.events:emit("mod.vrm_pokemon_bank.pokemon_deposited", { box = boxNum, index = slot, mon = mon })
     return boxNum, slot
@@ -1087,6 +1150,7 @@ function Module.install(mod, core)
       if game then
         reshapeForActiveGame(game, mon)
         stampNewTrainer(game, mon)
+        autoHealMon("withdraw", game, mon)
       end
       registerDex(game, mon.species)
       mod.events:emit("mod.vrm_pokemon_bank.pokemon_withdrawn", { box = boxNum, index = index, mon = mon })
@@ -1120,6 +1184,8 @@ function Module.install(mod, core)
   mod.exports.listPokemon = function() return listMons() end
   mod.exports.pokemonCount = function() return countMons() end
 
+  mod.exports.healBank = function(game) return healBank(game) end
+
   mod.exports.isValidPokemon = function(mon, game)
     return isValidPokemon(mon, game and game.data)
   end
@@ -1127,6 +1193,7 @@ function Module.install(mod, core)
 
   mod.exports.reshapeForActiveGame = function(game, mon) return reshapeForActiveGame(game, mon) end
   mod.exports.reshapeMoves = function(game, mon) return reshapeMoves(game, mon) end
+  mod.exports.reshapeStatus = function(mon) return reshapeStatus(mon) end
 
   mod.exports.listInvalidPokemon = function() return listInvalidMons() end
   mod.exports.invalidPokemonCount = function() return invalidMonCount() end
@@ -1186,7 +1253,8 @@ function Module.install(mod, core)
     for _, entry in ipairs(toDeposit) do
       local mon = entry.mon
       if game then ensureStats(game, mon) end
-      
+      autoHealMon("deposit", game, mon)
+
       -- Find space starting from current box
       local placed = false
       for off = 0, #s.boxes - 1 do
@@ -1286,7 +1354,8 @@ function Module.install(mod, core)
     for _, entry in ipairs(toDeposit) do
       local mon = entry.mon
       if game then ensureStats(game, mon) end
-      
+      autoHealMon("deposit", game, mon)
+
       -- Find space starting from current box
       local placed = false
       for off = 0, #s.boxes - 1 do
@@ -1401,6 +1470,7 @@ function Module.install(mod, core)
         local mon = entry.mon
         reshapeForActiveGame(game, mon)
         stampNewTrainer(game, mon)
+        autoHealMon("withdraw", game, mon)
         table.insert(party, mon)
         registerDex(game, mon.species)
         withdrawn[#withdrawn + 1] = { mon = mon }
@@ -1499,6 +1569,7 @@ function Module.install(mod, core)
         if box and #box < Boxes.CAPACITY then
           reshapeForActiveGame(game, mon)
           stampNewTrainer(game, mon)
+          autoHealMon("withdraw", game, mon)
           table.insert(box, mon)
           registerDex(game, mon.species)
           withdrawn[#withdrawn + 1] = { mon = mon, pcBox = boxNum }

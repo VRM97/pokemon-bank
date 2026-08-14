@@ -21,6 +21,13 @@ return function(mod)
     { key = "show_items_tab", label = "ITEMS MENU", type = "toggle", default = true },
     { key = "show_money_tab", label = "MONEY MENU", type = "toggle", default = true },
     { key = "inherit_trainer_on_withdraw", label = "INHERIT TRAINER", type = "toggle", default = false },
+    { key = "auto_heal", label = "AUTO HEAL", type = "choice", default = "never",
+      choices = {
+        { "NEVER", "never" },
+        { "ON DEPOSIT", "deposit" },
+        { "ON WITHDRAW", "withdraw" },
+        { "AT POKéMON CENTER", "center" },
+      } },
   })
   local SaveSerializer = require("src.core.SaveSerializer")
   local SaveData = require("src.core.SaveData")
@@ -625,6 +632,35 @@ return function(mod)
           return
         end
         return origChoose(self)
+      end
+    end
+  end
+
+  -- AUTO HEAL's "center" choice: heals the whole Bank the moment the game's own Pokémon Center heal actually happens. Real engine-internals surgery, gated per generation.
+  local function healBankAtCenter()
+    if mod.options:get("auto_heal") ~= "center" then return end
+    if liveGame then mod.exports.healBank(liveGame) end
+  end
+
+  if GameVersion.generation() == 2 then
+    local ok, Specials = pcall(require, "src.script.gen2.Specials")
+    if ok and type(Specials) == "table" and type(Specials.ALL) == "table"
+        and type(Specials.ALL.HealParty) == "function" then
+      local origHealParty = Specials.ALL.HealParty
+      Specials.ALL.HealParty = function(vm)
+        local result = origHealParty(vm)
+        healBankAtCenter()
+        return result
+      end
+    end
+  else
+    local ok, OverworldController = pcall(require, "src.world.OverworldController")
+    if ok and type(OverworldController) == "table"
+        and type(OverworldController.finishNurseHeal) == "function" then
+      local origFinishNurseHeal = OverworldController.finishNurseHeal
+      OverworldController.finishNurseHeal = function(self, bye, onDone, npc)
+        healBankAtCenter()
+        return origFinishNurseHeal(self, bye, onDone, npc)
       end
     end
   end

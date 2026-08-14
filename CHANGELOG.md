@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.9.4
+
+**Key items can no longer be deposited or tossed on Gold.** The Bank's blacklist check only ever looked at `def.keyItem`, so on a Gold save it always read `nil` and every key item (Bicycle, Card Key, Itemfinder...) was depositable through DEPOSIT ITEM/MOVE ITEM and tossable through MOVE ITEM's TOSS. Gold's extracted item records classify by `def.pocket == "KEY_ITEM"`. Both fields are checked now.
+
+**A status condition now crosses generations too.** Depositing to the PC never clears a status, so a Pokémon stored with one kept whatever string its origin generation wrote -- unrecognized, and effectively read as "no status", the moment it crossed into the other generation. `reshapeForActiveGame` now translates the string both ways on withdrawal (`toxic` degrades to plain `PSN` going into Gen 1) and drops the Gen 2-only `statusTurns`/`toxicCounter` counters when heading to Gen 1. Also exported on its own as **`reshapeStatus(mon)`**.
+
+New **AUTO HEAL** option (NEVER by default): fully heals a Pokémon -- HP restored, status cured, every move's PP topped back up to its current-generation cap -- **ON DEPOSIT**, **ON WITHDRAW**, or **AT POKéMON CENTER** (the whole Bank, the moment the game's own Nurse heal actually happens).
+
+New exported **`healBank(game)`**, so a mod can heal every Pokémon already sitting in the Bank in one call -- what the new option's Center choice itself calls.
+
 ## 1.9.3
 
 **A move's PP Up bonus now survives a cross-generation withdrawal too.** Gen 1 keeps a move's PP Up count on `ppUps` and recomputes the raised cap on every read, Gen 2 instead stores that raised cap directly as `maxPp` and never keeps a `ppUps` counter at all.
