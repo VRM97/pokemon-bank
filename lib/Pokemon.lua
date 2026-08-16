@@ -22,18 +22,12 @@ function Module.install(mod, core)
   local loadStorage = core.loadStorage
   local markDirty = core.markDirty
   local normalizeBoxes = core.normalizeBoxes
-
-  local function message(game, text)
-    game.stack:push(TextBox.new(game, text))
-  end
+  local message = core.message
+  local monName = core.monName
+  local attachLevelIcons = core.attachLevelIcons
 
   local function playCry(game, species)
     pcall(function() require("src.core.Sound").playCry(game.data, species) end)
-  end
-
-  local function nameOf(game, mon)
-    local def = game.data.pokemon[mon.species]
-    return mon.nickname or mon.name or (def and def.name) or tostring(mon.species)
   end
 
   local function ensureStats(game, mon)
@@ -85,22 +79,30 @@ function Module.install(mod, core)
     if game and mod.options:get("auto_heal") == trigger then healMon(game, mon) end
   end
 
-  -- CRYSTAL_251 gives a mon its own held item on mon.heldItem instead of Gold's mon.item. Mirrored both ways the same way exp/experience are, but only when that mod is actually installed and loaded.
+  -- CRYSTAL_251 gives a mon its own held item on mon.heldItem instead of Gold's mon.item -- kept as a single field, whichever the active generation actually reads, cleared off the other so the id never sits duplicated on both.
   local function mirrorHeldItem(mon)
-    local crystal251 = mod.find and mod.find("CRYSTAL_251")
-    if not crystal251 then return end
-    if mon.heldItem == nil then mon.heldItem = mon.item end
-    if mon.item == nil then mon.item = mon.heldItem end
+    if type(mon) ~= "table" then return end
+    local value = mon.item or mon.heldItem
+    if value == nil then return end
+    if GameVersion.generation() == 2 then
+      mon.item, mon.heldItem = value, nil
+    else
+      mon.heldItem, mon.item = value, nil
+    end
   end
 
-  -- An Egg's remaining incubation is Gold's mon.eggSteps or CRYSTAL_251's mon.eggCycles. Cycles only ever fall, on either side, so whichever of the two is smaller is always the one that's actually current.
+  -- An Egg's remaining incubation is Gold's mon.eggSteps or CRYSTAL_251's mon.eggCycles -- kept as a single field matching the active generation, not both, so a hatch on either side always finds it there.
   -- CRYSTAL_251 also keeps the moves an Egg already inherited off mon.moves and stashes them on mon.eggMoves instead; Gold puts them straight on mon.moves from the moment the Egg is made and has no eggMoves field at all. Reshaped to whichever shape the destination expects, so a hatch on either side always finds the real moveset on mon.moves.
   local function mirrorEggFields(mon)
     if type(mon) ~= "table" or mon.isEgg ~= true then return end
     local crystal251 = mod.find and mod.find("CRYSTAL_251")
     if mon.eggSteps ~= nil or mon.eggCycles ~= nil then
       local cycles = math.min(mon.eggSteps or mon.eggCycles, mon.eggCycles or mon.eggSteps)
-      mon.eggSteps, mon.eggCycles = cycles, cycles
+      if GameVersion.generation() == 2 then
+        mon.eggSteps, mon.eggCycles = cycles, nil
+      else
+        mon.eggCycles, mon.eggSteps = cycles, nil
+      end
     end
     if crystal251 and GameVersion.generation() == 1 then
       if type(mon.moves) == "table" and #mon.moves > 0 then
@@ -110,6 +112,7 @@ function Module.install(mod, core)
     elseif type(mon.eggMoves) == "table" and #mon.eggMoves > 0
         and (type(mon.moves) ~= "table" or #mon.moves == 0) then
       mon.moves = mon.eggMoves
+      mon.eggMoves = nil
     end
   end
 
@@ -172,8 +175,14 @@ function Module.install(mod, core)
   -- Reshaped here, once, right before a withdrawn mon actually enters the currently active game -- recomputed with the target generation's own formula over the target generation's own base stats.
   local function reshapeForActiveGame(game, mon)
     if type(mon) ~= "table" then return mon end
-    if mon.exp == nil then mon.exp = mon.experience end
-    if mon.experience == nil then mon.experience = mon.exp end
+    local expValue = mon.exp or mon.experience
+    if expValue ~= nil then
+      if GameVersion.generation() == 2 then
+        mon.experience, mon.exp = expValue, nil
+      else
+        mon.exp, mon.experience = expValue, nil
+      end
+    end
     reshapeStatus(mon)
     mirrorHeldItem(mon)
     mirrorEggFields(mon)
@@ -230,9 +239,34 @@ function Module.install(mod, core)
   -- ---------------------------------------------------------------------
   -- Pokémon storage
   -- ---------------------------------------------------------------------
+  local function stampOrigin(mon)
+    if type(mon) ~= "table" then return end
+    if mon.originGame == nil then mon.originGame = GameVersion.get() end
+    if mon.originGeneration == nil then mon.originGeneration = GameVersion.generation() end
+  end
+
+  -- A mon deposited before originGame/originGeneration existed carries neither field. If its OT id matches the save that's currently validating the Bank, that trainer's own game/generation is the best inference of where it actually came from, so it's backfilled here instead of staying blank forever.
+  local function backfillOrigin(game, mon)
+    if type(mon) ~= "table" then return false end
+    if mon.originGame ~= nil and mon.originGeneration ~= nil then return false end
+    local player = game and game.save and game.save.player
+    if not (player and mon.otId ~= nil and mon.otId == player.id) then return false end
+    local changed = false
+    if mon.originGame == nil then
+      mon.originGame = GameVersion.get()
+      changed = true
+    end
+    if mon.originGeneration == nil then
+      mon.originGeneration = GameVersion.generation()
+      changed = true
+    end
+    return changed
+  end
+
   -- Never refuses: normalizeBoxes guarantees the last box is always empty, so the search below always finds room there even when every earlier box is full.
   local function depositMon(mon)
     if type(mon) ~= "table" then return nil end
+    stampOrigin(mon)
     local s = loadStorage()
     local n = #s.boxes
     local start = math.min(s.currentBox, n)
@@ -248,9 +282,7 @@ function Module.install(mod, core)
     return nil
   end
 
-  local function moveId(mv)
-    return type(mv) == "table" and mv.id or mv
-  end
+  local moveId = core.moveEntryId
 
   local function isValidPokemon(mon, data)
     if type(mon) ~= "table" or type(data) ~= "table" then return false end
@@ -259,24 +291,7 @@ function Module.install(mod, core)
     if mon.isEgg and GameVersion.generation() == 1 and not (mod.find and mod.find("CRYSTAL_251")) then
       return false
     end
-    local moves = data.moves
-    if type(moves) ~= "table" then return false end
-    if type(mon.moves) == "table" then
-      for _, mv in ipairs(mon.moves) do
-        local id = moveId(mv)
-        if id and not moves[id] then return false end
-      end
-    end
     return true
-  end
-
-  local function ensureOrphaned(s)
-    if not s.orphaned then
-      s.orphaned = { mons = {}, items = {} }
-    end
-    s.orphaned.mons = s.orphaned.mons or {}
-    s.orphaned.items = s.orphaned.items or {}
-    return s.orphaned
   end
 
   -- A held item can go stale the same way a bank item can -- an id from an uninstalled mod, or one this game's item table simply doesn't carry.
@@ -296,15 +311,84 @@ function Module.install(mod, core)
     return true
   end
 
+  -- Every bankId currently in use or still referenced, to check a freshly rolled one against: mons in the Bank's own boxes, quarantined mons in orphaned.mons, and orphaned.monMoves' own keys -- a mon that's already left the Bank still has moves waiting there under its bankId, so that id can never be handed to anyone else either.
+  local function bankIdTaken(s, id)
+    for _, box in ipairs(s.boxes) do
+      for _, mon in ipairs(box) do
+        if mon.bankId == id then return true end
+      end
+    end
+    local orphaned = s.orphaned
+    if orphaned then
+      for _, mon in ipairs(orphaned.mons or {}) do
+        if mon.bankId == id then return true end
+      end
+      if orphaned.monMoves and orphaned.monMoves[id] then return true end
+    end
+    return false
+  end
+
+  -- Every stored mon's permanent identity: assigned once, kept forever (withdraw/deposit never clear it), so orphaned.monMoves below can still find a specific mon after it's left the Bank for the party or a PC box. Random rather than sequential, so a bankId reveals nothing about deposit order or how many Pokémon have ever passed through the Bank -- collision-checked against bankIdTaken above rather than trusted to the odds alone, however small they already are at this range.
+  local function assignBankId(s, mon)
+    if type(mon) ~= "table" or mon.bankId ~= nil then return false end
+    local id
+    repeat
+      id = math.random(1, 999999999)
+    until not bankIdTaken(s, id)
+    mon.bankId = id
+    return true
+  end
+
+  -- A species-valid mon whose moveset includes an id the active game doesn't know sets aside just that move (not the whole moveset) under its own bankId in orphaned.monMoves, rather than quarantining the mon itself -- the mon stays put and keeps every move that's still valid, until RELEARN MOVE (lib/Moves.lua) brings back whichever set-aside moves are valid again. Merges into any bucket already there instead of overwriting it, and skips an id already present so re-validating twice never duplicates an entry.
+  local function scrubInvalidMoves(s, mon, orphaned, data)
+    if type(mon.moves) ~= "table" or #mon.moves == 0 then return false end
+    local keep, bad = {}, {}
+    for _, mv in ipairs(mon.moves) do
+      local id = moveId(mv)
+      if id and not data.moves[id] then
+        bad[#bad + 1] = mv
+      else
+        keep[#keep + 1] = mv
+      end
+    end
+    if #bad == 0 then return false end
+    assignBankId(s, mon)
+    local bucket = orphaned.monMoves[mon.bankId]
+    if not bucket then
+      bucket = {}
+      orphaned.monMoves[mon.bankId] = bucket
+    end
+    for _, mv in ipairs(bad) do
+      local id = moveId(mv)
+      local dup = false
+      for _, existing in ipairs(bucket) do
+        if moveId(existing) == id then dup = true break end
+      end
+      if not dup then bucket[#bucket + 1] = mv end
+    end
+    mon.moves = keep
+    return true
+  end
+
   local function validateStorage(game)
     local data = game and game.data
     if not data then
       return { changed = false, quarantined = 0, restored = 0, lostMons = {}, restoredMons = {}, lostItems = {} }
     end
     local s = loadStorage()
-    local orphaned = ensureOrphaned(s)
+    local orphaned = core.ensureOrphaned(s)
+    local bankIdAssigned = false
+    for _, box in ipairs(s.boxes) do
+      for _, mon in ipairs(box) do
+        if assignBankId(s, mon) then bankIdAssigned = true end
+      end
+    end
+    for _, mon in ipairs(orphaned.mons) do
+      if assignBankId(s, mon) then bankIdAssigned = true end
+    end
     local quarantined, restored = 0, 0
     local lostMons, restoredMons, lostItems = {}, {}, {}
+    local originBackfilled = false
     for boxNum = 1, #s.boxes do
       local box = s.boxes[boxNum]
       for idx = #box, 1, -1 do
@@ -314,8 +398,10 @@ function Module.install(mod, core)
           orphaned.mons[#orphaned.mons + 1] = mon
           quarantined = quarantined + 1
           lostMons[#lostMons + 1] = { species = mon.species, from = "BOX " .. boxNum }
-        elseif checkHeldItem(game, mon, orphaned, lostItems) then
-          markDirty()
+        else
+          local heldChanged = checkHeldItem(game, mon, orphaned, lostItems)
+          if backfillOrigin(game, mon) then originBackfilled = true end
+          if heldChanged then markDirty() end
         end
       end
     end
@@ -327,6 +413,7 @@ function Module.install(mod, core)
       if isValidPokemon(mon, data) then
         table.remove(orphaned.mons, idx)
         checkHeldItem(game, mon, orphaned, lostItems)
+        if backfillOrigin(game, mon) then originBackfilled = true end
         -- Find space in current target box or create new if needed
         if #targetBox >= BOX_CAPACITY then
           s.boxes[#s.boxes + 1] = {}
@@ -339,8 +426,14 @@ function Module.install(mod, core)
       end
     end
     normalizeBoxes(s)
+    local scrubbed = 0
+    for _, box in ipairs(s.boxes) do
+      for _, mon in ipairs(box) do
+        if scrubInvalidMoves(s, mon, orphaned, data) then scrubbed = scrubbed + 1 end
+      end
+    end
     return {
-      changed = quarantined > 0 or restored > 0 or #lostItems > 0,
+      changed = quarantined > 0 or restored > 0 or #lostItems > 0 or bankIdAssigned or scrubbed > 0 or originBackfilled,
       quarantined = quarantined,
       restored = restored,
       lostMons = lostMons,
@@ -428,10 +521,6 @@ function Module.install(mod, core)
   -- =========================================================================
   -- Pokémon UI
   -- =========================================================================
-  local function monLabel(game, mon)
-    return Strings("%s :L%d", nameOf(game, mon), mon.level)
-  end
-
   -- action + STATS + CANCEL, the vanilla PC's own per-mon submenu
   local function monSubmenu(game, action, mon, onAction)
     game.stack:push(Menu.new(game, {
@@ -458,11 +547,11 @@ function Module.install(mod, core)
     end
     local items = {}
     for i, mon in ipairs(box) do
-      items[#items + 1] = { label = monLabel(game, mon), value = i }
+      items[#items + 1] = { label = monName(game, mon), value = i }
     end
     local list
     list = ListMenu.new(game, Strings("BOX %d (WITHDRAW)", boxNum), items, {
-      noSound = true,
+      noSound = true, wrap = true,
       onChoose = function(item)
         local mon = box[item.value]
         if not mon then return end
@@ -481,12 +570,13 @@ function Module.install(mod, core)
           registerDex(game, mon.species)
           mod.events:emit("mod.vrm_pokemon_bank.pokemon_withdrawn",
             { box = boxNum, index = item.value, mon = mon })
-          local name = nameOf(game, mon)
+          local name = monName(game, mon)
           list:close()
           message(game, ("%s is\ntaken out.\vGot %s."):format(name, name))
         end)
       end,
     })
+    attachLevelIcons(list, box)
     game.stack:push(list)
   end
 
@@ -497,10 +587,10 @@ function Module.install(mod, core)
     end
     local items = {}
     for i, mon in ipairs(game.save.party) do
-      items[#items + 1] = { label = monLabel(game, mon), value = i }
+      items[#items + 1] = { label = monName(game, mon), value = i }
     end
     local list = ListMenu.new(game, "PARTY (DEPOSIT)", items, {
-      noSound = true,
+      noSound = true, wrap = true,
       onChoose = function(item, list)
         local mon = game.save.party[item.value]
         if not mon then return end
@@ -515,12 +605,13 @@ function Module.install(mod, core)
           local boxNum, slot = depositMon(mon)
           mod.events:emit("mod.vrm_pokemon_bank.pokemon_deposited",
             { box = boxNum, index = slot, mon = mon })
-          local name = nameOf(game, mon)
+          local name = monName(game, mon)
           list:close()
           message(game, ("%s was\nstored in BANK BOX %d."):format(name, boxNum))
         end)
       end,
     })
+    attachLevelIcons(list, game.save.party)
     game.stack:push(list)
   end
 
@@ -534,14 +625,14 @@ function Module.install(mod, core)
     end
     local items = {}
     for i, mon in ipairs(box) do
-      items[#items + 1] = { label = monLabel(game, mon), value = i }
+      items[#items + 1] = { label = monName(game, mon), value = i }
     end
     local list = ListMenu.new(game, ("BOX %d (RELEASE)"):format(boxNum), items, {
-      noSound = true,
+      noSound = true, wrap = true,
       onChoose = function(_, list)
         local mon = box[list.index]
         if not mon then return end
-        local name = nameOf(game, mon)
+        local name = monName(game, mon)
         game.stack:push(TextBox.new(game,
           Strings("Once released,\n%s is\ngone forever. OK?", name), function()
           game.stack:push(ChoiceBox.new(game, function(yes)
@@ -563,6 +654,7 @@ function Module.install(mod, core)
         end))
       end,
     })
+    attachLevelIcons(list, box)
     game.stack:push(list)
   end
 
@@ -578,7 +670,7 @@ function Module.install(mod, core)
       }
     end
     game.stack:push(ListMenu.new(game, "CHANGE BOX", items, {
-      noSound = true,
+      noSound = true, wrap = true,
       onChoose = function(item, list)
         local st = loadStorage()
         st.currentBox = math.max(1, math.min(#st.boxes, item.value))
@@ -605,12 +697,6 @@ function Module.install(mod, core)
     local screen = { isOpaque = true }
     local list
     local rebuild, backHandler
-
-    local function clampState()
-      local st = loadStorage()
-      state.bankBox = math.max(1, math.min(#st.boxes, state.bankBox))
-      state.pcBox = math.max(1, math.min(Boxes.COUNT, state.pcBox))
-    end
 
     local function currentBoxNum()
       return state.view == "bank" and state.bankBox or state.pcBox
@@ -710,13 +796,14 @@ function Module.install(mod, core)
     end
 
     rebuild = function()
-      clampState()
+      core.clampBoxState(state, loadStorage, Boxes.COUNT)
       local box = currentBox()
       local rows = {}
       for i, mon in ipairs(box) do
-        rows[#rows + 1] = { label = monLabel(game, mon), value = i }
+        rows[#rows + 1] = { label = monName(game, mon), value = i }
       end
-      list = ListMenu.new(game, viewTitle(), rows, { noSound = true, rows = 6 })
+      list = ListMenu.new(game, viewTitle(), rows, { noSound = true, rows = 6, wrap = true })
+      attachLevelIcons(list, box)
       list.footer = state.stage == "source"
         and ("A: PICK BOX\nSELECT: " .. (state.view == "bank" and "PC" or "BANK"))
         or "A: CONFIRM"
@@ -754,14 +841,8 @@ function Module.install(mod, core)
 
     -- Gen1 Modern UI compatibility surface: read-only accessors plus semantic actions so the presenter can paint this screen, and a touch/mouse user can drive it
     screen.screenId = TRANSFER_BOX_SCREEN_ID
-    screen.gen1ModernUi = {
+    screen.gen1ModernUi = core.gen1ModernUiListAdapter(function() return list end, {
       title = function() return viewTitle() end,
-      rows = function() return core.publicRows(list) end,
-      index = function() return list.index end,
-      scroll = function() return list.scroll end,
-      footer = function() return list.footer end,
-      up = function() core.moveListCursor(list, -1) end,
-      down = function() core.moveListCursor(list, 1) end,
       left = function() cycleBox(-1) end,
       right = function() cycleBox(1) end,
       select = function(payload)
@@ -770,8 +851,7 @@ function Module.install(mod, core)
       end,
       back = function() backHandler() end,
       start = function() cycleView() end,
-      hover = function(payload) core.setListCursor(list, payload) end,
-    }
+    })
 
     rebuild()
     game.stack:push(screen)
@@ -822,12 +902,6 @@ function Module.install(mod, core)
     local list -- current ListMenu; rebuilt on every view/box/data change
 
     local rebuild, performMove, releaseCurrent, completeSwitch, openMonActions, backHandler, chooseCurrent
-
-    local function clampState()
-      local st = loadStorage()
-      state.bankBox = math.max(1, math.min(#st.boxes, state.bankBox))
-      state.pcBox = math.max(1, math.min(Boxes.COUNT, state.pcBox))
-    end
 
     local function currentList()
       if state.view == "bank" then return loadStorage().boxes[state.bankBox]
@@ -941,7 +1015,7 @@ function Module.install(mod, core)
         message(game, "You can't release\nyour last POKéMON!")
         return
       end
-      local name = nameOf(game, mon)
+      local name = monName(game, mon)
       game.stack:push(TextBox.new(game,
         Strings("Once released,\n%s is\ngone forever. OK?", name), function()
         game.stack:push(ChoiceBox.new(game, function(yes)
@@ -999,15 +1073,16 @@ function Module.install(mod, core)
     end
 
     rebuild = function()
-      clampState()
+      core.clampBoxState(state, loadStorage, Boxes.COUNT)
       local src = currentList()
       local rows = {}
       for i, mon in ipairs(src) do
-        rows[#rows + 1] = { label = monLabel(game, mon), value = i }
+        rows[#rows + 1] = { label = monName(game, mon), value = i }
       end
       list = ListMenu.new(game, viewTitle(), rows, {
         noSound = true,
         rows = 6,
+        wrap = true,
         onChoose = function(item)
           if state.pendingSwap then
             completeSwitch(item.value)
@@ -1018,6 +1093,7 @@ function Module.install(mod, core)
           openMonActions(mon, item.value)
         end,
       })
+      attachLevelIcons(list, src)
       list.footer = "\nSELECT: " .. nextViewName()
       local pending = state.pendingSwap
       if pending and pending.view == state.view then
@@ -1040,14 +1116,8 @@ function Module.install(mod, core)
     end
 
     -- Whatever pressing A on the highlighted row would do -- list.onChoose already branches on state.pendingSwap itself, so this is the one thing the Gen1 Modern UI "select" action needs to reuse.
-    -- An empty list mirrors ListMenu:update's own empty-list branch, where A closes the screen exactly like B does.
     chooseCurrent = function()
-      if #list.items == 0 then
-        game.stack:pop()
-        return
-      end
-      local item = list.items[list.index]
-      if item and list.onChoose then list.onChoose(item, list) end
+      core.chooseListCurrent(list, function() game.stack:pop() end)
     end
 
     function screen:update(dt)
@@ -1079,14 +1149,8 @@ function Module.install(mod, core)
 
     -- Gen1 Modern UI compatibility surface -- see the TRANSFER BOX screen above (openTransferBoxList) for the full explanation.
     screen.screenId = MOVE_SCREEN_ID
-    screen.gen1ModernUi = {
+    screen.gen1ModernUi = core.gen1ModernUiListAdapter(function() return list end, {
       title = function() return viewTitle() end,
-      rows = function() return core.publicRows(list) end,
-      index = function() return list.index end,
-      scroll = function() return list.scroll end,
-      footer = function() return list.footer end,
-      up = function() core.moveListCursor(list, -1) end,
-      down = function() core.moveListCursor(list, 1) end,
       left = function() cycleBox(-1) end,
       right = function() cycleBox(1) end,
       select = function(payload)
@@ -1095,8 +1159,7 @@ function Module.install(mod, core)
       end,
       back = function() backHandler() end,
       start = function() cycleView() end,
-      hover = function(payload) core.setListCursor(list, payload) end,
-    }
+    })
 
     rebuild()
     game.stack:push(screen)
@@ -1119,17 +1182,13 @@ function Module.install(mod, core)
 
   mod.content.screens:register(SCREEN_ID, { new = BankBoxMenu })
 
-  -- Tab visibility: POKéMON MENU option AND setPokemonTabEnabled override.
-  local tabEnabledByOthers = true
-
-  local function tabEnabled()
-    return tabEnabledByOthers and mod.options:get("show_pokemon_tab") == true
-  end
+  local pokemonTab = core.makeTabToggle("show_pokemon_tab")
+  local tabEnabled = pokemonTab.enabled
 
   -- =========================================================================
   -- Public API for other mods. See API.md for the full reference.
   -- =========================================================================
-  mod.exports.boxCount = function() return boxCount() end
+  mod.exports.boxCount = boxCount
   mod.exports.boxCapacity = function() return BOX_CAPACITY end
 
   mod.exports.depositPokemon = function(mon, opts)
@@ -1158,7 +1217,7 @@ function Module.install(mod, core)
     return mon
   end
 
-  mod.exports.getPokemon = function(boxNum, index) return peekMon(boxNum, index) end
+  mod.exports.getPokemon = peekMon
 
   mod.exports.getBox = function(boxNum)
     local s = loadStorage()
@@ -1169,9 +1228,7 @@ function Module.install(mod, core)
     return copy
   end
 
-  mod.exports.movePokemon = function(srcBox, srcIdx, destBox, destIdx)
-    return moveMon(srcBox, srcIdx, destBox, destIdx)
-  end
+  mod.exports.movePokemon = moveMon
 
   mod.exports.releasePokemon = function(boxNum, index)
     local mon = withdrawMon(boxNum, index)
@@ -1181,221 +1238,143 @@ function Module.install(mod, core)
     return mon ~= nil
   end
 
-  mod.exports.listPokemon = function() return listMons() end
-  mod.exports.pokemonCount = function() return countMons() end
+  mod.exports.listPokemon = listMons
+  mod.exports.pokemonCount = countMons
 
-  mod.exports.healBank = function(game) return healBank(game) end
+  mod.exports.healBank = healBank
 
   mod.exports.isValidPokemon = function(mon, game)
     return isValidPokemon(mon, game and game.data)
   end
-  mod.exports.validatePokemonStorage = function(game) return validateStorage(game) end
+  mod.exports.validatePokemonStorage = validateStorage
 
-  mod.exports.reshapeForActiveGame = function(game, mon) return reshapeForActiveGame(game, mon) end
-  mod.exports.reshapeMoves = function(game, mon) return reshapeMoves(game, mon) end
-  mod.exports.reshapeStatus = function(mon) return reshapeStatus(mon) end
+  mod.exports.reshapeForActiveGame = reshapeForActiveGame
+  mod.exports.reshapeMoves = reshapeMoves
+  mod.exports.reshapeStatus = reshapeStatus
 
-  mod.exports.listInvalidPokemon = function() return listInvalidMons() end
-  mod.exports.invalidPokemonCount = function() return invalidMonCount() end
+  mod.exports.listInvalidPokemon = listInvalidMons
+  mod.exports.invalidPokemonCount = invalidMonCount
+
+  local function validIndices(indices, n)
+    for _, idx in ipairs(indices) do
+      if type(idx) ~= "number" or idx < 1 or idx > n then return false end
+    end
+    return true
+  end
+
+  local function allIndices(n)
+    local t = {}
+    for i = 1, n do t[#t + 1] = i end
+    return t
+  end
+
+  -- Shared by every bulk deposit/withdraw export below: collects the mons at `indices` off `source`, in the caller's own order, then asks `place(mon, originalIdx)` to move each one into its destination. `place` returns a result table on success or nil to leave that mon where it is (a full destination); every mon `place` accepted is then removed from `source`, in descending index order so an earlier removal never shifts a later one. Returns the successful results and how many entries were left behind.
+  local function bulkTransfer(source, indices, place)
+    local entries = {}
+    for _, idx in ipairs(indices) do
+      entries[#entries + 1] = { mon = source[idx], originalIdx = idx }
+    end
+    local results, removedIdx = {}, {}
+    for _, entry in ipairs(entries) do
+      local result = place(entry.mon, entry.originalIdx)
+      if result then
+        results[#results + 1] = result
+        removedIdx[#removedIdx + 1] = entry.originalIdx
+      end
+    end
+    table.sort(removedIdx, function(a, b) return a > b end)
+    for _, idx in ipairs(removedIdx) do table.remove(source, idx) end
+    return results, #entries - #results
+  end
+
+  -- Builds a bulkTransfer `place` callback that deposits each mon into the Bank's own boxes, searching from `startBoxNum` and continuing wherever the last mon actually landed -- shared by depositPartyPokemon and depositBoxPokemon, the only two bulk paths that deposit INTO the Bank.
+  local function depositPlacer(game, s, startBoxNum)
+    local currentBoxNum = startBoxNum
+    return function(mon)
+      if game then ensureStats(game, mon) end
+      autoHealMon("deposit", game, mon)
+      stampOrigin(mon)
+      for off = 0, #s.boxes - 1 do
+        local boxNum = ((currentBoxNum - 1 + off) % #s.boxes) + 1
+        if #s.boxes[boxNum] < BOX_CAPACITY then
+          table.insert(s.boxes[boxNum], mon)
+          currentBoxNum = boxNum
+          return { box = boxNum, index = #s.boxes[boxNum], mon = mon }
+        end
+      end
+      -- Should not happen due to normalizeBoxes guarantee, but handle gracefully
+      s.boxes[#s.boxes + 1] = {}
+      table.insert(s.boxes[#s.boxes], mon)
+      currentBoxNum = #s.boxes
+      return { box = #s.boxes, index = 1, mon = mon }
+    end
+  end
 
   -- Bulk deposit from party
   mod.exports.depositPartyPokemon = function(game, opts)
     opts = opts or {}
     local targetBoxNum = opts.boxNum -- nil = last box
     local indices = opts.indices -- nil = 2..last (keep first)
-    
+
     if not game or not game.save or not game.save.party then
       return nil, "invalid game"
     end
-    
+
     local party = game.save.party
     if #party < 2 then
       return nil, "need at least 2 pokemon in party"
     end
-    
+
     -- Default indices: keep first, deposit rest
     if not indices then
       indices = {}
-      for i = 2, #party do
-        indices[#indices + 1] = i
-      end
+      for i = 2, #party do indices[#indices + 1] = i end
     end
-    
-    -- Validate indices
-    for _, idx in ipairs(indices) do
-      if type(idx) ~= "number" or idx < 1 or idx > #party then
-        return nil, "invalid index"
-      end
-    end
-    
-    -- Ensure at least one remains after removal
-    local remainingCount = #party - #indices
-    if remainingCount < 1 then
+    if not validIndices(indices, #party) then return nil, "invalid index" end
+    if #party - #indices < 1 then
       return nil, "must keep at least 1 pokemon in party"
     end
-    
+
     local s = loadStorage()
-    local startBox = targetBoxNum or #s.boxes -- default to last box
-    
-    -- Collect mons to deposit, in the caller's own indices order -- removal
-    -- below sorts its own descending list, so this one is free to preserve
-    -- the order mons actually land in the destination box.
-    local toDeposit = {}
-    for _, idx in ipairs(indices) do
-      toDeposit[#toDeposit + 1] = { mon = party[idx], originalIdx = idx }
-    end
-    
-    -- Deposit each mon
-    local deposited = {}
-    local currentBox = startBox
-    local currentBoxNum = currentBox
-    
-    for _, entry in ipairs(toDeposit) do
-      local mon = entry.mon
-      if game then ensureStats(game, mon) end
-      autoHealMon("deposit", game, mon)
+    local deposited = bulkTransfer(party, indices, depositPlacer(game, s, targetBoxNum or #s.boxes))
 
-      -- Find space starting from current box
-      local placed = false
-      for off = 0, #s.boxes - 1 do
-        local boxNum = ((currentBoxNum - 1 + off) % #s.boxes) + 1
-        if #s.boxes[boxNum] < BOX_CAPACITY then
-          table.insert(s.boxes[boxNum], mon)
-          deposited[#deposited + 1] = { box = boxNum, index = #s.boxes[boxNum], mon = mon }
-          currentBoxNum = boxNum
-          placed = true
-          break
-        end
-      end
-      
-      if not placed then
-        -- Should not happen due to normalizeBoxes guarantee, but handle gracefully
-        s.boxes[#s.boxes + 1] = {}
-        table.insert(s.boxes[#s.boxes], mon)
-        deposited[#deposited + 1] = { box = #s.boxes, index = 1, mon = mon }
-        currentBoxNum = #s.boxes
-      end
-    end
-
-    -- Remove from party (in reverse index order to preserve positions)
-    local sortedIndices = {}
-    for _, idx in ipairs(indices) do
-      sortedIndices[#sortedIndices + 1] = idx
-    end
-    table.sort(sortedIndices, function(a, b) return a > b end)
-    
-    for _, idx in ipairs(sortedIndices) do
-      table.remove(party, idx)
-    end
-    
     normalizeBoxes(s)
     markDirty()
-    
-    -- Emit events for each deposited mon
+
     for _, entry in ipairs(deposited) do
       mod.events:emit("mod.vrm_pokemon_bank.pokemon_deposited", entry)
     end
-    
+
     return deposited
   end
 
   -- Bulk deposit from PC box
   mod.exports.depositBoxPokemon = function(game, pcBoxNum, opts)
     opts = opts or {}
-    local targetBoxNum = opts.boxNum -- nil = last box
-    local indices = opts.indices -- nil = all
-    
+    local targetBoxNum = opts.boxNum
+    local indices = opts.indices
     if not game or not game.save or not game.save.boxes then
       return nil, "invalid game"
     end
-    
     local Boxes = require("src.pokemon.Boxes")
     Boxes.ensure(game.save)
-
     local pcBox = game.save.boxes[pcBoxNum]
-    if not pcBox then
-      return nil, "invalid pc box"
-    end
-    
-    if #pcBox == 0 then
-      return nil, "pc box is empty"
-    end
-    
-    -- Default indices: all
-    if not indices then
-      indices = {}
-      for i = 1, #pcBox do
-        indices[#indices + 1] = i
-      end
-    end
-    
-    -- Validate indices
-    for _, idx in ipairs(indices) do
-      if type(idx) ~= "number" or idx < 1 or idx > #pcBox then
-        return nil, "invalid index"
-      end
-    end
-    
+    if not pcBox then return nil, "invalid pc box" end
+    if #pcBox == 0 then return nil, "pc box is empty" end
+
+    indices = indices or allIndices(#pcBox)
+    if not validIndices(indices, #pcBox) then return nil, "invalid index" end
+
     local s = loadStorage()
-    local startBox = targetBoxNum or #s.boxes -- default to last box
-    
-    -- Collect mons to deposit, in the caller's own indices order -- removal
-    -- below sorts its own descending list, so this one is free to preserve
-    -- the order mons actually land in the destination box.
-    local toDeposit = {}
-    for _, idx in ipairs(indices) do
-      toDeposit[#toDeposit + 1] = { mon = pcBox[idx], originalIdx = idx }
-    end
-    
-    -- Deposit each mon
-    local deposited = {}
-    local currentBoxNum = startBox
-    
-    for _, entry in ipairs(toDeposit) do
-      local mon = entry.mon
-      if game then ensureStats(game, mon) end
-      autoHealMon("deposit", game, mon)
+    local deposited = bulkTransfer(pcBox, indices, depositPlacer(game, s, targetBoxNum or #s.boxes))
 
-      -- Find space starting from current box
-      local placed = false
-      for off = 0, #s.boxes - 1 do
-        local boxNum = ((currentBoxNum - 1 + off) % #s.boxes) + 1
-        if #s.boxes[boxNum] < BOX_CAPACITY then
-          table.insert(s.boxes[boxNum], mon)
-          deposited[#deposited + 1] = { box = boxNum, index = #s.boxes[boxNum], mon = mon }
-          currentBoxNum = boxNum
-          placed = true
-          break
-        end
-      end
-      
-      if not placed then
-        s.boxes[#s.boxes + 1] = {}
-        table.insert(s.boxes[#s.boxes], mon)
-        deposited[#deposited + 1] = { box = #s.boxes, index = 1, mon = mon }
-        currentBoxNum = #s.boxes
-      end
-    end
-
-    -- Remove from PC box (in reverse index order)
-    local sortedIndices = {}
-    for _, idx in ipairs(indices) do
-      sortedIndices[#sortedIndices + 1] = idx
-    end
-    table.sort(sortedIndices, function(a, b) return a > b end)
-    
-    for _, idx in ipairs(sortedIndices) do
-      table.remove(pcBox, idx)
-    end
-    
     normalizeBoxes(s)
     markDirty()
-    
-    -- Emit events for each deposited mon
+
     for _, entry in ipairs(deposited) do
       mod.events:emit("mod.vrm_pokemon_bank.pokemon_deposited", entry)
     end
-    
+
     return deposited
   end
 
@@ -1404,103 +1383,47 @@ function Module.install(mod, core)
     opts = opts or {}
     local sourceBoxNum = opts.boxNum -- nil = first non-empty box
     local indices = opts.indices -- nil = all
-    
+
     if not game or not game.save or not game.save.party then
       return nil, "invalid game"
     end
-    
+
     local party = game.save.party
     local s = loadStorage()
-    
+
     -- Default source box: first non-empty box
     if not sourceBoxNum then
       sourceBoxNum = 1
       while sourceBoxNum <= #s.boxes and #s.boxes[sourceBoxNum] == 0 do
         sourceBoxNum = sourceBoxNum + 1
       end
-      if sourceBoxNum > #s.boxes then
-        return nil, "bank is empty"
-      end
-    end
-    
-    local sourceBox = s.boxes[sourceBoxNum]
-    if not sourceBox then
-      return nil, "invalid bank box"
-    end
-    
-    if #sourceBox == 0 then
-      return nil, "bank box is empty"
-    end
-    
-    -- Default indices: all
-    if not indices then
-      indices = {}
-      for i = 1, #sourceBox do
-        indices[#indices + 1] = i
-      end
-    end
-    
-    -- Validate indices
-    for _, idx in ipairs(indices) do
-      if type(idx) ~= "number" or idx < 1 or idx > #sourceBox then
-        return nil, "invalid index"
-      end
-    end
-    
-    -- Calculate how many can fit in party
-    local partySpace = Party.MAX - #party
-    if partySpace <= 0 then
-      return nil, "party is full"
-    end
-    
-    -- Collect mons to withdraw, in the caller's own indices order -- removal
-    -- below sorts its own descending list, so this one is free to preserve
-    -- the order mons actually land in the party.
-    local toWithdraw = {}
-    for _, idx in ipairs(indices) do
-      toWithdraw[#toWithdraw + 1] = { mon = sourceBox[idx], originalIdx = idx }
+      if sourceBoxNum > #s.boxes then return nil, "bank is empty" end
     end
 
-    -- Withdraw up to party capacity
-    local withdrawn = {}
-    local remaining = {}
-    
-    for _, entry in ipairs(toWithdraw) do
-      if #withdrawn < partySpace then
-        local mon = entry.mon
-        reshapeForActiveGame(game, mon)
-        stampNewTrainer(game, mon)
-        autoHealMon("withdraw", game, mon)
-        table.insert(party, mon)
-        registerDex(game, mon.species)
-        withdrawn[#withdrawn + 1] = { mon = mon }
-        mod.events:emit("mod.vrm_pokemon_bank.pokemon_withdrawn", { box = sourceBoxNum, index = entry.originalIdx, mon = mon })
-      else
-        remaining[#remaining + 1] = entry
-      end
-    end
-    
-    -- Remove withdrawn mons from bank (in reverse index order)
-    local sortedIndices = {}
-    for _, entry in ipairs(withdrawn) do
-      -- Need to find the original index from toWithdraw
-      for _, origEntry in ipairs(toWithdraw) do
-        if origEntry.mon == entry.mon then
-          sortedIndices[#sortedIndices + 1] = origEntry.originalIdx
-          break
-        end
-      end
-    end
-    table.sort(sortedIndices, function(a, b) return a > b end)
-    
-    for _, idx in ipairs(sortedIndices) do
-      table.remove(sourceBox, idx)
-    end
-    
+    local sourceBox = s.boxes[sourceBoxNum]
+    if not sourceBox then return nil, "invalid bank box" end
+    if #sourceBox == 0 then return nil, "bank box is empty" end
+
+    indices = indices or allIndices(#sourceBox)
+    if not validIndices(indices, #sourceBox) then return nil, "invalid index" end
+
+    if Party.MAX - #party <= 0 then return nil, "party is full" end
+
+    local withdrawn, remainingCount = bulkTransfer(sourceBox, indices, function(mon, originalIdx)
+      if #party >= Party.MAX then return nil end
+      reshapeForActiveGame(game, mon)
+      stampNewTrainer(game, mon)
+      autoHealMon("withdraw", game, mon)
+      table.insert(party, mon)
+      registerDex(game, mon.species)
+      mod.events:emit("mod.vrm_pokemon_bank.pokemon_withdrawn", { box = sourceBoxNum, index = originalIdx, mon = mon })
+      return { mon = mon }
+    end)
+
     normalizeBoxes(s)
     markDirty()
-    
-    return { withdrawn = withdrawn, remaining = #remaining }
+
+    return { withdrawn = withdrawn, remaining = remainingCount }
   end
 
   -- Bulk withdraw to PC box
@@ -1513,10 +1436,7 @@ function Module.install(mod, core)
     end
     local Boxes = require("src.pokemon.Boxes")
     Boxes.ensure(game.save)
-    local targetBox = game.save.boxes[targetPcBoxNum]
-    if not targetBox then
-      return nil, "invalid target pc box"
-    end
+    if not game.save.boxes[targetPcBoxNum] then return nil, "invalid target pc box" end
     local s = loadStorage()
     -- Default source box: first non-empty box
     if not sourceBoxNum then
@@ -1524,44 +1444,17 @@ function Module.install(mod, core)
       while sourceBoxNum <= #s.boxes and #s.boxes[sourceBoxNum] == 0 do
         sourceBoxNum = sourceBoxNum + 1
       end
-      if sourceBoxNum > #s.boxes then
-        return nil, "bank is empty"
-      end
+      if sourceBoxNum > #s.boxes then return nil, "bank is empty" end
     end
     local sourceBox = s.boxes[sourceBoxNum]
-    if not sourceBox then
-      return nil, "invalid bank box"
-    end
-    if #sourceBox == 0 then
-      return nil, "bank box is empty"
-    end
-    -- Default indices: all
-    if not indices then
-      indices = {}
-      for i = 1, #sourceBox do
-        indices[#indices + 1] = i
-      end
-    end
-    -- Validate indices
-    for _, idx in ipairs(indices) do
-      if type(idx) ~= "number" or idx < 1 or idx > #sourceBox then
-        return nil, "invalid index"
-      end
-    end
-    -- Collect mons to withdraw, in the caller's own indices order -- removal
-    -- below sorts its own descending list, so this one is free to preserve
-    -- the order mons actually land in the destination PC box.
-    local toWithdraw = {}
-    for _, idx in ipairs(indices) do
-      toWithdraw[#toWithdraw + 1] = { mon = sourceBox[idx], originalIdx = idx }
-    end
-    -- Withdraw mons, filling target box then overflowing to next boxes
-    local withdrawn = {}
-    local remaining = {}
+    if not sourceBox then return nil, "invalid bank box" end
+    if #sourceBox == 0 then return nil, "bank box is empty" end
+
+    indices = indices or allIndices(#sourceBox)
+    if not validIndices(indices, #sourceBox) then return nil, "invalid index" end
+
     local currentPcBoxNum = targetPcBoxNum
-    for _, entry in ipairs(toWithdraw) do
-      local mon = entry.mon
-      local placed = false
+    local withdrawn, remainingCount = bulkTransfer(sourceBox, indices, function(mon, originalIdx)
       -- Try to place in current or subsequent PC boxes
       for off = 0, Boxes.COUNT - 1 do
         local boxNum = ((currentPcBoxNum - 1 + off) % Boxes.COUNT) + 1
@@ -1572,43 +1465,23 @@ function Module.install(mod, core)
           autoHealMon("withdraw", game, mon)
           table.insert(box, mon)
           registerDex(game, mon.species)
-          withdrawn[#withdrawn + 1] = { mon = mon, pcBox = boxNum }
-          mod.events:emit("mod.vrm_pokemon_bank.pokemon_withdrawn", { box = sourceBoxNum, index = entry.originalIdx, mon = mon })
+          mod.events:emit("mod.vrm_pokemon_bank.pokemon_withdrawn", { box = sourceBoxNum, index = originalIdx, mon = mon })
           currentPcBoxNum = boxNum
-          placed = true
-          break
+          return { mon = mon, pcBox = boxNum }
         end
       end
-      if not placed then
-        remaining[#remaining + 1] = entry
-      end
-    end
-    -- Remove withdrawn mons from bank (in reverse index order)
-    local sortedIndices = {}
-    for _, entry in ipairs(withdrawn) do
-      for _, origEntry in ipairs(toWithdraw) do
-        if origEntry.mon == entry.mon then
-          sortedIndices[#sortedIndices + 1] = origEntry.originalIdx
-          break
-        end
-      end
-    end
-    table.sort(sortedIndices, function(a, b) return a > b end)
-    for _, idx in ipairs(sortedIndices) do
-      table.remove(sourceBox, idx)
-    end
+      return nil
+    end)
+
     normalizeBoxes(s)
     markDirty()
-    return { withdrawn = withdrawn, remaining = #remaining }
+    return { withdrawn = withdrawn, remaining = remainingCount }
   end
 
   mod.exports.pokemonScreenId = SCREEN_ID
 
-  mod.exports.setPokemonTabEnabled = function(enabled)
-    tabEnabledByOthers = enabled ~= false
-    return true
-  end
-  mod.exports.isPokemonTabEnabled = function() return tabEnabled() end
+  mod.exports.setPokemonTabEnabled = pokemonTab.setEnabled
+  mod.exports.isPokemonTabEnabled = tabEnabled
 
   mod.log:info("Pokemon Bank: Pokemon tab ready")
 

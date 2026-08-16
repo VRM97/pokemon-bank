@@ -1,71 +1,90 @@
 # Pokémon Bank
 
-A second storage for Pokémon, items and money that lives **outside every gen1recomp save file**. Deposit a Pokémon, an item or money while playing one save -- any of Red, Blue, Yellow or Gold, any slot -- and withdraw it while playing a completely different one. The Bank is its own file, so New Game, deleting a save slot or switching versions never touches it.
+A second storage for Pokémon, items, moves and money that lives **outside every save file**. Deposit a Pokémon, an item, a move or money while playing one save and withdraw it while playing a completely different one, any gen, any slot. The Bank is its own file, so New Game, deleting a save slot or switching versions never touches it.
 
 ## How to use it
 
-Open any Pokémon Center PC and select **POKéMON BANK**. On Red/Blue/Yellow it's part of the same WHICH PC list your own bedroom PC opens too; on Gold it's a row on the Pokécenter's "Access whose PC?" screen, next to BILL's PC and PROF.OAK's PC -- Gold's own bedroom PC has no box access at all (same as BILL's storage), so POKéMON BANK is Pokécenter-only there. Three options:
-- **POKéMON**:
-  - **WITHDRAW PKMN** lists the current box's Pokémon by name and level; picking one offers WITHDRAW (sends it to your party) or STATS.
-  - **DEPOSIT PKMN** lists your party the same way; picking one offers DEPOSIT (your last Pokémon can't be deposited) or STATS.
-  - **MOVE PKMN** opens a single browsable view instead of a list: SELECT cycles between the Bank, your party and a PC box (BANK > PARTY > PC); Left/Right flips through boxes while viewing the Bank or the PC. Picking a Pokémon offers TO BANK/PARTY/PC (only the two storages you're *not* currently viewing), SWITCH (swap places with another Pokémon in that same storage -- Left/Right still works while picking the target, so the swap can land in a different box), STATS and RELEASE.
-  - **RELEASE PKMN** lists the current box, asks to confirm, then it's gone for good.
-  - **TRANSFER BOX** picks two whole boxes to move at once, browsable the same way as MOVE PKMN: SELECT alternates only between the Bank and a PC box (Left/Right flips through boxes as usual). A on a non-empty box locks it in as the source and switches you to the other storage -- pick a Bank box and it shows you a PC box next, or the other way around -- with SELECT locked out from there so you can only land on a box in that other storage. A again asks to confirm, then moves every Pokémon across, overflowing into the following boxes if it doesn't all fit in one; B while picking the destination backs out to choosing a different source instead of leaving the screen.
-  - **CHANGE BOX** lists every box with its Pokémon count (`*` marks the current one) -- see **How many boxes** below for how many there are.
-- **ITEMS**:
-  - **WITHDRAW ITEM** lists the Bank's items (sorted alphabetically); picking one asks a quantity and adds it to your Bag (refused if your Bag has no room).
-  - **DEPOSIT ITEM** lists your Bag's items the same way; picking one asks a quantity and stores it (refused up front for HMs and key items -- see **What can't be deposited** below).
-  - **MOVE ITEM** opens a single browsable view of three item storages: BANK, BAG and *Player*'s PC, SELECT cycles between them. Picking an item offers TO BANK/BAG/PC (only the two storages you're *not* currently viewing, asking a quantity and moving it there), SWITCH (BAG only -- swaps its place with another item in your Bag, the same reordering the real Bag menu's own SELECT does), TOSS (your Bag and PC both refuse an HM/key item first, same as their own vanilla TOSS does) and CANCEL.
-  - **TOSS ITEM** lists the Bank's items and permanently deletes a quantity of the one you pick, after asking to confirm -- nothing here can be an HM or key item, since those can never enter the Bank to begin with.
-  - Neither list closes after a transfer -- the row updates in place and the result shows at the bottom, so you can move several items in one visit, exactly like the vanilla PC does.
-- **MONEY**:
-  - **DEPOSIT MONEY** and **WITHDRAW MONEY** each open an amount box showing your own MONEY and the Bank's BANK balance above it: Up/Down cycles the digit under the cursor (0-9, wrapping), Left/Right moves the cursor to another digit, START jumps straight to the max, A confirms, B cancels.
-  - Depositing is capped by how much money you're carrying; withdrawing is capped by both the Bank's own balance and how much room is left before your money would hit the game's own ¥999999 cap.
+Open any Pokémon Center PC and select **POKéMON BANK**. Four options:
 
-Withdrawing into a full party, or depositing your Bag's last non-key item stack it needs a slot for, behaves the same way the vanilla PC/Bag do: you're told, nothing is lost.
+### POKéMON
 
-**Withdrawing register it in your Pokédex** if it wasn't already seen/owned there -- the same way evolving one does. Depositing, releasing and moving Pokémon within the Bank never touch the Pokédex; only taking one out (to your party, or straight to a PC box through another mod's Bank integration) does.
+- **MOVE PKMN** browses the Bank, your party and a PC box at once (SELECT cycles, Left/Right flips boxes). Picking a Pokémon offers TO BANK/PARTY/PC, SWITCH, STATS or RELEASE.
+- **WITHDRAW PKMN** lists the current box's Pokémon by name and level; picking one offers WITHDRAW (sends it to your party) or STATS.
+- **DEPOSIT PKMN** lists your party the same way; picking one offers DEPOSIT (your last Pokémon can't be deposited) or STATS.
+- **RELEASE PKMN** lists the current box and asks to confirm.
+- **TRANSFER BOX** moves an entire box at once: pick a source box (A), then a box on the other side as the destination, confirm, and every Pokémon moves across, overflowing into further boxes if needed.
+- **CHANGE BOX** lists every box with its Pokémon count (`*` marks the current one).
 
-**Crossing generations just works.** Deposit a Pokémon on Red and withdraw it on Gold, or the other way around, and its stats come out right on either side -- Gold's split Special Attack/Special Defense is recalculated from the same DVs and level the moment it's withdrawn there, and recombines into Red's single Special the same way going back. A status condition crosses too (a badly-poisoned Pokémon from Gold lands as plain poisoned on Red, since Red has no such distinction). Nothing about the Pokémon is lost either way; a Gold-only detail (held item, gender, Pokérus, shininess, and so on) simply has nothing to do on Red and reappears exactly as it was once you're back on Gold.
+**No box limit.** A full Bank grows another box instead of ever refusing a Pokémon, and an emptied-out box is removed automatically.
 
-**An Egg crosses generations too**, hatch timer and already-rolled moves intact either way -- withdrawing it on Gold or on a Red/Blue/Yellow save with [CRYSTAL_251](https://github.com/Deftones565/gen1recomp-mod-crystal-251) installed picks up right where it left off. A plain Red/Blue/Yellow save has no Day Care breeding at all, so an Egg deposited from elsewhere is set aside the same way an unknown Pokémon is (see **Where the data lives** below) until it's viewed from a game that knows what to do with it. An Egg **always** becomes yours (OT, OT ID and OT name) the moment you withdraw it.
+**Withdrawing registers it in your Pokédex** if it wasn't already seen or owned (the same way evolving one does).
 
-Set **SHOW IN PC MENU** option to off (on by default) hides the row if you'd rather not see it; another mod can also hide it outright -- see [API.md](./API.md).
+**Crossing generations just works.** A Pokémon's stats and status translate correctly whichever way you cross, and nothing is lost.
 
-Turn on **SHOW FIRST IN PC MENU** (off by default) to move the **POKéMON BANK** row to the very top of the PC menu.
+**An Egg crosses generations too**, hatch timer and moves intact between Gold and a Gen 1 save with [CRYSTAL_251](https://github.com/Deftones565/gen1recomp-mod-crystal-251). Elsewhere it's set aside until viewed from a game that supports it (see **Where the data lives**). It **always** becomes yours the moment you withdraw it.
 
-**POKéMON MENU**, **ITEMS MENU** and **MONEY MENU** (all on by default) let you turn off any side independently. With two or more on, the row opens a chooser listing just the enabled ones, as above. With only one on, the row skips the chooser and opens that side directly. With all off, the row doesn't appear at all, same as turning off **SHOW IN PC MENU**. A mod can also hide any side outright, on top of these options -- see [API.md](./API.md).
+### ITEMS
 
-Turn on **INHERIT TRAINER** (off by default) to make every *other* Pokémon you withdraw become yours too, the same way: OT, OT ID and OT name change to your own the moment it leaves the Bank.
+- **MOVE ITEM** browses the Bank, Bag and PC at once (SELECT cycles). Picking an item offers TO BANK/BAG/PC, SWITCH (Bag only) or TOSS.
+- **WITHDRAW ITEM** lists the Bank's items (sorted alphabetically); picking one asks a quantity and adds it to your Bag (refused if your Bag has no room).
+- **DEPOSIT ITEM** lists your Bag's items the same way; picking one asks a quantity and stores it (refused up front for HMs and key items).
+- **TOSS ITEM** lists the Bank's items and permanently deletes a quantity you pick, after confirming.
 
-**AUTO HEAL** (NEVER by default) fully heals a Pokémon -- HP restored, status cured, every move's PP topped back up to its current cap -- at a moment you choose: **ON DEPOSIT** (the instant it enters the Bank, through DEPOSIT PKMN, MOVE PKMN or either bulk export), **ON WITHDRAW** (the instant it leaves, through WITHDRAW PKMN, MOVE PKMN or either bulk export), or **AT POKéMON CENTER** (every Pokémon already sitting in the Bank, the moment the game's own Nurse actually heals your party -- a blackout/whiteout doesn't count, only an actual Center visit does). Mod authors can also heal the whole Bank at once on demand -- see [API.md](./API.md).
+**TMs go through the MOVES tab instead.** DEPOSIT ITEM and MOVE ITEM refuse one with a message pointing you there. With the MOVES tab turned off, that rule drops too -- a TM deposits like any other item, since there's nowhere else for it to go right now (whatever's already banked as a move stays there regardless). A TM already in the Bank still withdraws normally either way. Everything else deposits freely, with no limit on distinct item stacks.
 
-## How many boxes
+### MOVES
 
-**No limit.** Depositing into a full bank grows it a box at a time instead of ever refusing a Pokémon. An emptied-out box (the last Pokémon in it withdrawn, released, or moved out) is deleted rather than left as a gap, so the Bank always has exactly one spare empty box past however many are actually in use -- it shrinks back down on its own as you empty it out, too.
+A TM you deposit here is banked as the move it teaches (or adds a use to one already banked) instead of taking up an item slot; withdrawing turns a banked use back into the matching TM item.
 
-## What can't be deposited
+- **DEPOSIT MOVE** lists your Bag's TM stacks (never HMs). Picking one asks a quantity and converts it into that many banked uses of the move it teaches.
+- **WITHDRAW MOVE** lists every banked move (sorted alphabetically); picking one asks a quantity and adds that many TMs to your Bag (refused if your Bag has no room).
+- **TEACH MOVE** spends one banked use directly, no TM needed: pick a move, then a Pokémon, marked **ABLE** or **---** by every way it (or a prevolution) could ever know that move, not just by TM. A move already known, or one it can't learn, is refused and the use isn't spent. With [Reusable Machines](https://github.com/FAFF0x/gen1recomp) installed, a successful teach doesn't spend the use either.
+- **RELEARN MOVE** recovers a move that couldn't fill itself back in automatically because the Pokémon's moveset was already full. It only shows up when there's one like that to bring back. Doesn't touch the Bank's own move stock.
 
-**HMs and key items never leave the save.** Their DEPOSIT option is refused with a message rather than hidden, so it's clear why. Everything else -- TMs, medicine, balls, battle items -- deposits freely, with no capacity limit on the item list either (any number of distinct stacks).
+### MONEY
+
+- **DEPOSIT MONEY** opens an amount box showing your own MONEY and the Bank's BANK balance (Up/Down cycles the digit, Left/Right moves the cursor, START jumps to the max, A confirms, B cancels), capped by how much you're carrying.
+- **WITHDRAW MONEY** opens the same amount box, capped by both the Bank's own balance and how much room is left before your money would hit the game's own ¥999999 cap.
+
+## Options
+
+LABEL|CHOICES|DEFAULT|DESCRIPTION|
+-|-|-|-
+SHOW IN PC MENU|NONE / START / MIDDLE / END|END|Where the **POKéMON BANK** row sits on the PC menu: **NONE** hides it, **START** is the very top, **MIDDLE** sits right below BILL's PC, **END** sits right below the player's PC.
+POKéMON MENU*|ON / OFF|ON|Turns the POKéMON tab on or off.
+ITEMS MENU*|ON / OFF|ON|Turns the ITEMS tab on or off.
+MOVES MENU*|ON / OFF|ON|Turns the MOVES tab on or off.
+MONEY MENU*|ON / OFF|ON|Turns the MONEY tab on or off.
+INHERIT TRAINER|ON / OFF|OFF|Makes every withdrawn Pokémon become yours (OT, OT ID and OT name).
+AUTO HEAL|NEVER / ON DEPOSIT / ON WITHDRAW / AT POKéMON CENTER|NEVER|Fully heals a Pokémon at the chosen moment (**AT POKéMON CENTER** heals the whole Bank).
+LOAD REPORT|NONE / MESSAGE / REPORT|REPORT|Controls how you're notified when a load moves anything to or from quarantine.
+
+*\* With two or more on, the row opens a chooser listing just the enabled ones, as above. With only one on, the row skips the chooser and opens that side directly. With all off, the row doesn't appear at all, same as setting **SHOW IN PC MENU** to **NONE**.*
+
+### Game OPTIONS menu
+
+The game's own **OPTIONS** menu has a **POKéMON BANK** row, independent of **SHOW IN PC MENU**: it opens a page with every option above, followed by ~~five~~ three actions:
+
+- **VIEW STATS** shows a running log of everything the Bank has ever handled. SELECT switches between all-time totals and just this save's own contribution.
+- **VIEW LOST** browses whatever's currently quarantined (Pokémon, items and banked moves the active game doesn't recognize right now). SELECT cycles between the three lists. Read-only, same data the load-time **LOAD REPORT** summarizes; each entry moves itself back automatically once viewed from a game that recognizes it again.
+- ~~**EXPORT DATA\*** writes the Bank's entire contents to `bank/export.lua`, backing up any previous export first.~~
+- ~~**IMPORT DATA\*** reads that file back in and, after confirming, **replaces the Bank's current contents with it**.~~
+- **DELETE DATA\*** erases the Bank entirely and asks **twice** first, since it can't be undone. Each save's own stats are untouched, since they live in the save, not the Bank.
+
+*\* Take effect on disk immediately.*
 
 ## Where the data lives
 
-`bank/storage.lua`, written next to `saves/` and `options.lua` in a portable install, or in the OS save directory otherwise -- the same place/rule the game's own saves and options follow (see  `SaveData.portableFs()`). It is never written into, or read from, `save.modData`, so no save slot carries a copy of it and no save can overwrite it.
+`bank/storage.lua`, written next to `saves` and `options.lua` in a portable install, or in the OS save directory otherwise. It is never written into, or read from, `save.modData`, so no save slot carries a copy of it and no save can overwrite it.
 
-The Bank's all-time stats (**VIEW STATS** above) follow the exact same rule, in their own file next to it, `bank/stats.lua` -- also outside every save, also written on the same save-triggered schedule (see below). Only the "THIS SAVE" half of that screen is the exception: it's written into `save.modData` on purpose, since it's meant to travel and rewind with that one save rather than the shared Bank.
+The Bank's all-time stats (**VIEW STATS** above) follow the exact same rule, in their own file next to it, `bank/stats.lua`. Only the "THIS SAVE" half of that screen is the exception: it's written into `save.modData` on purpose, since it's meant to travel and rewind with that one save rather than the shared Bank.
 
-**It's written on the same schedule as your save file.** A Bank transaction only changes things in memory; the actual write to `storage.lua` happens alongside the next time the game itself saves (a manual SAVE, an autosave mod, anything that reaches `Game:writeSave`). This is deliberate: if the Bank wrote immediately, resetting without saving after a deposit would leave you with the Pokémon both in the Bank *and* back in your unsaved party -- free duplication. Waiting for the same save point the game already uses means a reset always reverts both together, so nothing can be duplicated or lost that way. Before writing, the previous `storage.lua` rolls into `storage.lua.bak` and the new one stages as `storage.lua.tmp` before the swap -- the same backup-and-staged-write discipline the game's own save files use -- so a crash mid-write leaves a recoverable copy instead of a half-written file.
+**It's written on the same schedule as your save file.** A Bank transaction only changes things in memory; the actual write to `storage.lua` happens alongside the next time the game itself saves (a manual SAVE, an autosave mod, anything that reaches `Game:writeSave`). This is deliberate: if the Bank wrote immediately, resetting without saving after a deposit would leave you with the Pokémon both in the Bank *and* back in your unsaved party. Waiting for the same save point the game already uses means a reset always reverts both together, so nothing can be duplicated or lost that way. Before writing, the previous `storage.lua` rolls into `storage.lua.bak` and the new one stages as `storage.lua.tmp` before the swap (the same backup-and-staged-write discipline the game's own save files use) so a crash mid-write leaves a recoverable copy instead of a half-written file.
 
-**After you load a save**, the Bank checks every stored Pokémon and item against the active game's data. A Pokémon whose species or any move is unknown is set aside in an internal invalid list (not shown in the normal WITHDRAW lists); an item whose id is unknown is set aside the same way, and so is an HM or key item found in storage (they can never be deposited going forward, but this catches ones that ended up there some other way -- an older save, a mod change, and so on). If something that was invalid becomes valid again -- because you installed the mod that defines it, or switched to a version that includes it -- it is moved back automatically (Pokémon go to the end of the last box); an HM or key item stays set aside even then, since it's still not allowed in the Bank. You get a short summary message when anything moved.
+**After you load a save**, the Bank checks every stored Pokémon, item and banked move against the active game's data. A Pokémon whose *species* is unknown or an Egg on a Gen 1 save without CRYSTAL_251 is set aside in an internal invalid list (not shown in the normal WITHDRAW lists, but browsable any time through **VIEW LOST**); an item whose id is unknown is set aside the same way, and so is an HM or key item found in storage (they can never be deposited going forward, but this catches ones that ended up there some other way); a banked move id this game version doesn't recognize *at all* (a different version, or the mod that added it removed) is set aside too. If something that was invalid becomes valid again it is moved back automatically (Pokémon go to the end of the last box); an HM or key item stays set aside even then, since it's still not allowed in the Bank.
 
-The game's own **OPTIONS** menu has a **POKéMON BANK** row, independent of **SHOW IN PC MENU** -- it opens a page with four actions:
-- **VIEW STATS** shows a running log of every deposit, withdrawal, release and item/money transfer the Bank has ever handled: total actions, Pokémon/items/money in and out, the Bank's all-time peak balance and its most-deposited species. SELECT switches between the shared Bank's all-time totals (every save that ever used it) and just the save you're currently playing's own contribution to them.
-- **EXPORT DATA** writes the Bank's entire contents to `bank/export.lua`, as a `.lua` file, rolling any file already there into `bank/export.lua.bak` first so exporting again never loses the previous one.
-- **IMPORT DATA** reads `bank/export.lua` back in and, after you confirm, **replaces the Bank's current contents with it** -- anything deposited since that export was made is gone.
-- **DELETE DATA** erases the Bank's storage folder entirely -- every box, item, stored ¥, any leftover export files, and the all-time stats above -- back to nothing. Since there's no way to get any of it back afterward, it's the only Bank action that asks **twice** before going through, unlike the single confirmation RELEASE PKMN or TOSS ITEM ask for. Each save's own stats aren't part of this -- they live in that save's own data, not the Bank's, so deleting the Bank doesn't erase what a save has already done with it.
-
-EXPORT/IMPORT/DELETE all take effect on disk immediately rather than waiting for the next save, unlike a normal deposit/withdraw (see **Where the data lives** above).
+**A Pokémon whose *moveset* includes an unknown move is treated differently:** only that move is set aside, every other move it knows stays right where it was, and so does the Pokémon itself. Once a set-aside move is valid again, it fills back into an empty slot on its own, on the next load, for that specific Pokémon wherever it ends up (the Bank, your party, a PC box); if its moveset was already full at that point, it stays waiting there until you bring it back yourself with **RELEARN MOVE** on the MOVES tab.
 
 ## For mod authors
 
-Pokémon Bank is fully independent and exposes everything it does through `mod.exports`. See [API.md](./API.md) for the full reference.
+Pokémon Bank is fully independent and exposes everything it does through `mod.exports`: deposit, withdraw and query every side of the Bank -- Pokémon (including bulk party/PC transfers), items, banked moves and money -- push straight to any tab's own screen or the same chooser the PC's own **POKéMON BANK** row opens, reuse the same BANK/PARTY-or-BAG/PC browsing screens (**Pickers**) TEACH MOVE and RELEARN MOVE are themselves built on, and listen for an event on every deposit, withdraw, release, teach or transfer -- whether it happened through this mod's own UI or through the exports themselves. See [API.md](./API.md) for the full reference.

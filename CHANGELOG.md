@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.10.0
+
+New **MOVES** tab: a fourth Bank storage for TMs, with **DEPOSIT MOVE**, **WITHDRAW MOVE**, **TEACH MOVE** (teaches a banked move straight to a Pokémon, no TM needed -- free with Reusable Machines installed) and **RELEARN MOVE** (restores moves a Pokémon lost, mostly automatic on load). TMs now go through DEPOSIT MOVE instead of DEPOSIT ITEM/MOVE ITEM, unless the tab is off, in which case they fall back to depositing as plain items. Banked and known moves now survive an unrecognized id or a missing TM without loss.
+
+A deposited Pokémon now gets `originGame`/`originGeneration` stamped on it the first time it enters the Bank, recording where it actually came from. Never overwritten on a later deposit, so it keeps pointing at the original game even if the mon travels through other saves first. **A mon deposited before gets them backfilled on load**, when its `otId` matches the validating save's own trainer.
+
+**Cross-generation fields (`exp`/`experience`, `eggSteps`/`eggCycles`, CRYSTAL_251's `heldItem`/Gold's `item`, Egg `moves`/`eggMoves`) no longer sit duplicated on both names.** `reshapeForActiveGame` now collapses each pair down to just the one field the active generation actually reads, clearing the other, instead of mirroring the value onto both.
+
+**SHOW IN PC MENU and SHOW FIRST IN PC MENU are now a single SHOW IN PC MENU option** with four choices: **NONE**, **START**, **MIDDLE** (right below BILL's/SOMEONE's PC), **END** (right below the player's own item-storage PC, the mod's original default and still the default here).
+
+New **MOVES MENU** option toggles the whole MOVES tab.
+
+New **LOAD REPORT** option picks how a load-time quarantine is reported: the full REPORT screen, a short MESSAGE, or NONE.
+
+**The POKéMON BANK page on the game's own OPTIONS menu now opens with every one of this mod's own settings right on it.** A cycling each in place, above VIEW STATS.
+
+New **VIEW LOST** row on the game's own OPTIONS > POKéMON BANK page, next to VIEW STATS: browses whatever's currently quarantined -- Pokémon, items and banked moves the active game doesn't recognize right now -- SELECT cycles between the three lists. Read-only, same data the load-time LOAD REPORT already summarizes once. New export `lostScreenId`.
+
+New exports: **`setTmItemDepositAllowed`**/**`isTmItemDepositAllowed`** (let another mod force the TM-deposit-as-item rule either way, overriding the MOVES tab), the MOVES tab's own data API (`depositMove`/`withdrawMove`/etc. -- see API.md), reusable picker screens (`openPokemonPicker`/`openMovePicker`/`openItemPicker`/`openBoxPicker`), and direct menu access (`openPokemonMenu`/`openItemsMenu`/`openMovesMenu`/`openMoneyMenu`/`openBankMenu`) for another mod to embed the Bank's UI in its own menu.
+
+Fixed: selecting POKéMON BANK on Gen 1's PC menu opened silently.
+
+`storage.lua` bumped to **version 4**.
+
 ## 1.9.6
 
 **Fixed: the Bank never actually saved outside of a portable install.** `fs()` fell back to `love.filesystem` directly, which the mod sandbox blocks. It now resolves the same standard/portable backend through `SaveData.persistenceFs()` instead, which isn't blocked.

@@ -28,6 +28,14 @@ function Module.install(mod, core)
     }
   end
 
+  local function freshMoveTotals()
+    return {
+      depositedOps = 0, depositedQty = 0,
+      withdrawnOps = 0, withdrawnQty = 0,
+      taught = 0,
+    }
+  end
+
   local function freshMoneyTotals()
     return {
       depositedOps = 0, depositedTotal = 0,
@@ -41,6 +49,7 @@ function Module.install(mod, core)
       transactions = 0,
       pokemon = freshTotals(),
       items = freshItemTotals(),
+      moves = freshMoveTotals(),
       money = freshMoneyTotals(),
     }
   end
@@ -66,6 +75,10 @@ function Module.install(mod, core)
     c.items = type(c.items) == "table" and c.items or {}
     for _, key in ipairs({ "depositedOps", "depositedQty", "withdrawnOps", "withdrawnQty", "tossedOps", "tossedQty" }) do
       c.items[key] = num(c.items[key])
+    end
+    c.moves = type(c.moves) == "table" and c.moves or {}
+    for _, key in ipairs({ "depositedOps", "depositedQty", "withdrawnOps", "withdrawnQty", "taught" }) do
+      c.moves[key] = num(c.moves[key])
     end
     c.money = type(c.money) == "table" and c.money or {}
     for _, key in ipairs({ "depositedOps", "depositedTotal", "withdrawnOps", "withdrawnTotal" }) do
@@ -217,6 +230,31 @@ function Module.install(mod, core)
     markDirty()
   end)
 
+  mod.events:on("mod.vrm_pokemon_bank.move_deposited", function(ev)
+    local qty = num(ev and ev.qty)
+    local g, s = loadGlobal(), saveCounters()
+    g.transactions, s.transactions = g.transactions + 1, s.transactions + 1
+    g.moves.depositedOps, s.moves.depositedOps = g.moves.depositedOps + 1, s.moves.depositedOps + 1
+    g.moves.depositedQty, s.moves.depositedQty = g.moves.depositedQty + qty, s.moves.depositedQty + qty
+    markDirty()
+  end)
+
+  mod.events:on("mod.vrm_pokemon_bank.move_withdrawn", function(ev)
+    local qty = num(ev and ev.qty)
+    local g, s = loadGlobal(), saveCounters()
+    g.transactions, s.transactions = g.transactions + 1, s.transactions + 1
+    g.moves.withdrawnOps, s.moves.withdrawnOps = g.moves.withdrawnOps + 1, s.moves.withdrawnOps + 1
+    g.moves.withdrawnQty, s.moves.withdrawnQty = g.moves.withdrawnQty + qty, s.moves.withdrawnQty + qty
+    markDirty()
+  end)
+
+  mod.events:on("mod.vrm_pokemon_bank.move_taught", function()
+    local g, s = loadGlobal(), saveCounters()
+    g.transactions, s.transactions = g.transactions + 1, s.transactions + 1
+    g.moves.taught, s.moves.taught = g.moves.taught + 1, s.moves.taught + 1
+    markDirty()
+  end)
+
   mod.events:on("mod.vrm_pokemon_bank.money_deposited", function(ev)
     local amount = num(ev and ev.amount)
     local g, s = loadGlobal(), saveCounters()
@@ -248,6 +286,11 @@ function Module.install(mod, core)
         depositedOps = c.items.depositedOps, depositedQty = c.items.depositedQty,
         withdrawnOps = c.items.withdrawnOps, withdrawnQty = c.items.withdrawnQty,
         tossedOps = c.items.tossedOps, tossedQty = c.items.tossedQty,
+      },
+      moves = {
+        depositedOps = c.moves.depositedOps, depositedQty = c.moves.depositedQty,
+        withdrawnOps = c.moves.withdrawnOps, withdrawnQty = c.moves.withdrawnQty,
+        taught = c.moves.taught,
       },
       money = {
         depositedOps = c.money.depositedOps, depositedTotal = c.money.depositedTotal,
@@ -294,6 +337,9 @@ function Module.install(mod, core)
       { label = "ITEM IN", right = fmtQty(g.items.depositedQty) },
       { label = "ITEM OUT", right = fmtQty(g.items.withdrawnQty) },
       { label = "ITEM TOSS", right = fmtQty(g.items.tossedQty) },
+      { label = "MOVE IN", right = fmtQty(g.moves.depositedQty) },
+      { label = "MOVE OUT", right = fmtQty(g.moves.withdrawnQty) },
+      { label = "TAUGHT", right = tostring(g.moves.taught) },
       { label = "¥ IN", right = fmtMoney(g.money.depositedTotal) },
       { label = "¥ OUT", right = fmtMoney(g.money.withdrawnTotal) },
       { label = "¥ PEAK", right = fmtMoney(g.peakMoney) },
@@ -317,6 +363,9 @@ function Module.install(mod, core)
       { label = "ITEM IN", right = fmtQty(s.items.depositedQty) },
       { label = "ITEM OUT", right = fmtQty(s.items.withdrawnQty) },
       { label = "ITEM TOSS", right = fmtQty(s.items.tossedQty) },
+      { label = "MOVE IN", right = fmtQty(s.moves.depositedQty) },
+      { label = "MOVE OUT", right = fmtQty(s.moves.withdrawnQty) },
+      { label = "TAUGHT", right = tostring(s.moves.taught) },
       { label = "¥ IN", right = fmtMoney(s.money.depositedTotal) },
       { label = "¥ OUT", right = fmtMoney(s.money.withdrawnTotal) },
     }
@@ -343,7 +392,7 @@ function Module.install(mod, core)
 
     rebuild = function()
       local rows = state.view == "global" and globalRows(game) or saveRows()
-      list = ListMenu.new(game, viewTitle(), rows, { noSound = true })
+      list = ListMenu.new(game, viewTitle(), rows, { noSound = true, wrap = true })
       list.footer = "SELECT: " .. nextViewName()
     end
 
@@ -366,20 +415,13 @@ function Module.install(mod, core)
     end
 
     screen.screenId = SCREEN_ID
-    screen.gen1ModernUi = {
+    screen.gen1ModernUi = core.gen1ModernUiListAdapter(function() return list end, {
       title = function() return viewTitle() end,
-      rows = function() return core.publicRows(list) end,
-      index = function() return list.index end,
-      scroll = function() return list.scroll end,
-      footer = function() return list.footer end,
-      up = function() core.moveListCursor(list, -1) end,
-      down = function() core.moveListCursor(list, 1) end,
       -- "select" is the A-equivalent here (mirrors AmountBox's own confirm/cancel mapping in lib/Money.lua), so it closes the same as A does natively; the physical SELECT button's cycleView is repurposed onto "start" instead, the same way lib/Items.lua's openMoveItemsList does when a screen has no real START use of its own.
       select = function() close() end,
       back = function() close() end,
       start = function() cycleView() end,
-      hover = function(payload) core.setListCursor(list, payload) end,
-    }
+    })
 
     rebuild()
     return screen

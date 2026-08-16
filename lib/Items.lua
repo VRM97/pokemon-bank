@@ -2,10 +2,8 @@ local V = ...
 
 local Bag = require("src.inventory.Bag")
 local Strings = require("src.core.Strings")
-local TextBox = require("src.render.TextBox")
 local Menu = require("src.ui.Menu")
 local ListMenu = require("src.ui.ListMenu")
-local QuantityBox = require("src.ui.QuantityBox")
 local ChoiceBox = require("src.ui.ChoiceBox")
 local Font = require("src.render.Font")
 
@@ -17,20 +15,31 @@ local Module = {}
 function Module.install(mod, core)
   local loadStorage = core.loadStorage
   local markDirty = core.markDirty
-
-  local function message(game, text)
-    game.stack:push(TextBox.new(game, text))
-  end
-
-  local function playSound(game, name)
-    pcall(function() require("src.core.Sound").play(game.data, name) end)
-  end
+  local playSound = core.playSound
+  local itemName = core.itemName
+  local sortedItemIds = core.sortedItemIds
+  local askItemQuantity = core.askQuantity
+  local isMovesTabEnabled = core.isMovesTabEnabled
 
   -- HMs and key items can never enter the Bank -- a hard rule, not a preference. See API.md's blacklistItem entry for extraBlacklist's own rules.
   local extraBlacklist = {}
 
   local function isHM(id)
     return type(id) == "string" and id:find("^HM_") ~= nil
+  end
+
+  -- A TM has a real place to go (banked as the move it teaches, lib/Moves.lua) rather than sitting here as a plain item -- refused at deposit time only, not blacklisted: a TM already in the Bank as an item from before this rule stays exactly where it is and is never quarantined for it. With the MOVES tab off (the player's own option or another mod's setMovesTabEnabled(false)), that place doesn't exist right now, so a TM falls back to depositing as a plain item instead of being refused outright -- whatever's already banked as a move stays exactly where it is either way.
+  local function isTM(id)
+    return type(id) == "string" and id:find("^TM_") ~= nil
+  end
+
+  -- Lets another mod force the rule above one way or the other, independent of (and taking priority over) the MOVES tab's own state: true always allows a TM to deposit as a plain item, false always refuses it, nil (the default) leaves the MOVES tab in charge. See setTmItemDepositAllowed/isTmItemDepositAllowed in API.md.
+  local tmItemDepositOverride = nil
+
+  local function blockTmDeposit(id)
+    if not isTM(id) then return false end
+    if tmItemDepositOverride ~= nil then return not tmItemDepositOverride end
+    return not isMovesTabEnabled or isMovesTabEnabled()
   end
 
   local function isKeyItem(def)
@@ -54,6 +63,7 @@ function Module.install(mod, core)
   local function depositItem(id, qty, def)
     qty = math.floor(tonumber(qty) or 0)
     if type(id) ~= "string" or id == "" or qty <= 0 then return false, "bad request" end
+    if blockTmDeposit(id) then return false, "is_tm" end
     if isBlacklisted(id, def) then return false, "blacklisted" end
     local s = loadStorage()
     s.items[id] = (s.items[id] or 0) + qty
@@ -85,22 +95,13 @@ function Module.install(mod, core)
       and data.items[id] ~= nil
   end
 
-  local function ensureOrphaned(s)
-    if not s.orphaned then
-      s.orphaned = { mons = {}, items = {} }
-    end
-    s.orphaned.mons = s.orphaned.mons or {}
-    s.orphaned.items = s.orphaned.items or {}
-    return s.orphaned
-  end
-
   local function validateStorage(game)
     local data = game and game.data
     if not data then
       return { changed = false, quarantined = 0, restored = 0, lostItems = {}, restoredItems = {} }
     end
     local s = loadStorage()
-    local orphaned = ensureOrphaned(s)
+    local orphaned = core.ensureOrphaned(s)
     local quarantined, restored = 0, 0
     local lostItems, restoredItems = {}, {}
     local badIds = {}
@@ -158,24 +159,10 @@ function Module.install(mod, core)
   -- =========================================================================
   -- Item UI
   -- =========================================================================
-  local function itemName(game, id)
-    local def = game.data.items[id]
-    return def and def.name or id
-  end
-
-  local function sortedItemIds(game, counts)
-    local ids = {}
-    for id, count in pairs(counts) do
-      if count and count > 0 then ids[#ids + 1] = id end
-    end
-    table.sort(ids, function(a, b) return itemName(game, a) < itemName(game, b) end)
-    return ids
-  end
-
   local function itemRows(game, items)
     local rows = {}
     for _, id in ipairs(sortedItemIds(game, items)) do
-      rows[#rows + 1] = { value = id, label = itemName(game, id), right = "x" .. tostring(items[id]) }
+      rows[#rows + 1] = { value = id, label = core.truncateName(itemName(game, id)), right = "x" .. tostring(items[id]) }
     end
     return rows
   end
@@ -198,7 +185,7 @@ function Module.install(mod, core)
     local rows = {}
     for _, id in ipairs(Bag.order(game.save)) do
       if inv[id] and inv[id] > 0 then
-        rows[#rows + 1] = { value = id, label = itemName(game, id), right = "x" .. tostring(inv[id]) }
+        rows[#rows + 1] = { value = id, label = core.truncateName(itemName(game, id)), right = "x" .. tostring(inv[id]) }
       end
     end
     return rows
@@ -234,16 +221,6 @@ function Module.install(mod, core)
     list.index = math.max(1, math.min(list.index, #list.items))
   end
 
-  local function askItemQuantity(game, list, count, cb)
-    list.footer = "How many?"
-    game.stack:push(QuantityBox.new(game, {
-      max = count,
-      onDone = function(qty)
-        if qty then cb(qty) else list.footer = nil end
-      end,
-    }))
-  end
-
   -- WITHDRAW ITEM's own per-item flow, factored out so MOVE ITEM's bank-side view can reuse it verbatim instead of duplicating it.
   local function withdrawItemChoice(game, list, item)
     local count = itemCount(item.value)
@@ -267,6 +244,10 @@ function Module.install(mod, core)
   -- DEPOSIT ITEM's own per-item flow, factored out so MOVE ITEM's bag-side view can reuse it verbatim instead of duplicating it.
   local function depositItemChoice(game, list, item)
     local def = game.data.items[item.value]
+    if blockTmDeposit(item.value) then
+      list.footer = "TMs go through\nthe MOVES tab!"
+      return
+    end
     if isBlacklisted(item.value, def) then
       list.footer = "That can't be\nstored in BANK!"
       return
@@ -289,7 +270,7 @@ function Module.install(mod, core)
   local function openWithdrawItemsList(game)
     local list
     list = ListMenu.new(game, "WITHDRAW ITEM", bankItemRows(game), {
-      messageBox = true, noSound = true,
+      messageBox = true, noSound = true, wrap = true,
       onChoose = function(item) withdrawItemChoice(game, list, item) end,
     })
     game.stack:push(list)
@@ -298,7 +279,7 @@ function Module.install(mod, core)
   local function openDepositItemsList(game)
     local list
     list = ListMenu.new(game, "DEPOSIT ITEM", bagItemRowsForBank(game), {
-      messageBox = true, noSound = true,
+      messageBox = true, noSound = true, wrap = true,
       onChoose = function(item) depositItemChoice(game, list, item) end,
     })
     game.stack:push(list)
@@ -352,6 +333,13 @@ function Module.install(mod, core)
       else return Strings("Withdrew\n%s.", name) end
     end
 
+    -- Why depositing id into the Bank right now would be refused -- checked up front in startMove, before the quantity prompt even opens (so TO BANK never asks "how many?" only to reject the answer), and again here in moveItem as the actual gate.
+    local function bankDepositBlockReason(id)
+      if blockTmDeposit(id) then return "TMs go through\nthe MOVES tab!" end
+      if isBlacklisted(id, game.data.items[id]) then return "That can't be\nstored in BANK!" end
+      return nil
+    end
+
     -- destination capacity/blacklist check, then move qty of id out of the current view and into destView.
     -- Only destView == "bank" or srcView == "bank" ever touches the Bank's own storage/events -- a BAG <-> PC move is entirely between two vanilla save structures.
     local function moveItem(destView, id, qty)
@@ -363,9 +351,8 @@ function Module.install(mod, core)
           return false, "You can't carry\nany more items."
         end
       elseif destView == "bank" then
-        if isBlacklisted(id, game.data.items[id]) then
-          return false, "That can't be\nstored in BANK!"
-        end
+        local reason = bankDepositBlockReason(id)
+        if reason then return false, reason end
       elseif destView == "pc" then
         if pcItemFull(game, id) then
           return false, "No room left to\nstore items."
@@ -401,6 +388,13 @@ function Module.install(mod, core)
       if not count then
         list.footer = "The selection changed."
         return
+      end
+      if destView == "bank" then
+        local reason = bankDepositBlockReason(id)
+        if reason then
+          list.footer = reason
+          return
+        end
       end
       askItemQuantity(game, list, count, function(qty)
         local _, msg = moveItem(destView, id, qty)
@@ -491,7 +485,7 @@ function Module.install(mod, core)
 
     rebuild = function()
       list = ListMenu.new(game, viewTitle(), currentRows(), {
-        messageBox = true, noSound = true,
+        messageBox = true, noSound = true, wrap = true,
         onChoose = function(item)
           if state.pendingSwap then
             completeSwitch(item.value)
@@ -524,14 +518,8 @@ function Module.install(mod, core)
     end
 
     -- Whatever pressing A on the highlighted row would do -- list.onChoose already branches on state.pendingSwap itself, so this is the one thing the Gen1 Modern UI "select" action needs to reuse.
-    -- An empty list mirrors ListMenu:update's own empty-list branch, where A closes the screen exactly like B does.
     chooseCurrent = function()
-      if #list.items == 0 then
-        game.stack:pop()
-        return
-      end
-      local item = list.items[list.index]
-      if item and list.onChoose then list.onChoose(item, list) end
+      core.chooseListCurrent(list, function() game.stack:pop() end)
     end
 
     function screen:update(dt)
@@ -558,22 +546,15 @@ function Module.install(mod, core)
     -- Gen1 Modern UI compatibility surface -- see main.lua's externalScreen and lib/Pokemon.lua's openTransferBoxList for the full explanation.
     -- No box concept here (item storage isn't paged), so no left/right.
     screen.screenId = MOVE_ITEMS_SCREEN_ID
-    screen.gen1ModernUi = {
+    screen.gen1ModernUi = core.gen1ModernUiListAdapter(function() return list end, {
       title = function() return viewTitle() end,
-      rows = function() return core.publicRows(list) end,
-      index = function() return list.index end,
-      scroll = function() return list.scroll end,
-      footer = function() return list.footer end,
-      up = function() core.moveListCursor(list, -1) end,
-      down = function() core.moveListCursor(list, 1) end,
       select = function(payload)
         if payload then core.setListCursor(list, payload) end
         chooseCurrent()
       end,
       back = function() backHandler() end,
       start = function() cycleView() end,
-      hover = function(payload) core.setListCursor(list, payload) end,
-    }
+    })
 
     rebuild()
     game.stack:push(screen)
@@ -582,7 +563,7 @@ function Module.install(mod, core)
   local function openTossItemsList(game)
     local list
     list = ListMenu.new(game, "TOSS ITEM", bankItemRows(game), {
-      messageBox = true, noSound = true,
+      messageBox = true, noSound = true, wrap = true,
       onChoose = function(item)
         local count = itemCount(item.value)
         if count <= 0 then
@@ -622,12 +603,8 @@ function Module.install(mod, core)
 
   mod.content.screens:register(SCREEN_ID, { new = BankItemMenu })
 
-  -- Tab visibility: ITEMS MENU option AND setItemsTabEnabled override.
-  local tabEnabledByOthers = true
-
-  local function tabEnabled()
-    return tabEnabledByOthers and mod.options:get("show_items_tab") == true
-  end
+  local itemsTab = core.makeTabToggle("show_items_tab")
+  local tabEnabled = itemsTab.enabled
 
   -- =========================================================================
   -- Public API for other mods. See API.md for the full reference.
@@ -662,15 +639,15 @@ function Module.install(mod, core)
     return ok, err
   end
 
-  mod.exports.itemCount = function(id) return itemCount(id) end
-  mod.exports.listItems = function() return listItems() end
+  mod.exports.itemCount = itemCount
+  mod.exports.listItems = listItems
 
   mod.exports.isValidItem = function(id, game)
     return isValidItem(id, game and game.data)
   end
-  mod.exports.validateItemsStorage = function(game) return validateStorage(game) end
-  mod.exports.listInvalidItems = function() return listInvalidItems() end
-  mod.exports.invalidItemCount = function(id) return invalidItemCount(id) end
+  mod.exports.validateItemsStorage = validateStorage
+  mod.exports.listInvalidItems = listInvalidItems
+  mod.exports.invalidItemCount = invalidItemCount
 
   mod.exports.isBlacklisted = function(id, game)
     local def = game and game.data and game.data.items and game.data.items[id]
@@ -683,13 +660,23 @@ function Module.install(mod, core)
     return true
   end
 
-  mod.exports.itemsScreenId = SCREEN_ID
-
-  mod.exports.setItemsTabEnabled = function(enabled)
-    tabEnabledByOthers = enabled ~= false
+  mod.exports.setTmItemDepositAllowed = function(value)
+    if value == nil then
+      tmItemDepositOverride = nil
+    else
+      tmItemDepositOverride = value ~= false
+    end
     return true
   end
-  mod.exports.isItemsTabEnabled = function() return tabEnabled() end
+
+  mod.exports.isTmItemDepositAllowed = function()
+    return not blockTmDeposit("TM_")
+  end
+
+  mod.exports.itemsScreenId = SCREEN_ID
+
+  mod.exports.setItemsTabEnabled = itemsTab.setEnabled
+  mod.exports.isItemsTabEnabled = tabEnabled
 
   mod.log:info("Pokemon Bank: Items tab ready")
 

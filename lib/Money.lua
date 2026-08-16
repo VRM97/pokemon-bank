@@ -3,7 +3,6 @@ local V = ...
 local GameVersion = require("src.core.GameVersion")
 local Strings = require("src.core.Strings")
 local Font = require("src.render.Font")
-local TextBox = require("src.render.TextBox")
 local Menu = require("src.ui.Menu")
 local Theme = require("src.ui.Theme")
 
@@ -18,14 +17,8 @@ local Module = {}
 function Module.install(mod, core)
   local loadStorage = core.loadStorage
   local markDirty = core.markDirty
-
-  local function message(game, text)
-    game.stack:push(TextBox.new(game, text))
-  end
-
-  local function playSound(game, name)
-    pcall(function() require("src.core.Sound").play(game.data, name) end)
-  end
+  local message = core.message
+  local playSound = core.playSound
 
   local function bankMoney()
     return loadStorage().money or 0
@@ -262,17 +255,13 @@ function Module.install(mod, core)
 
   mod.content.screens:register(SCREEN_ID, { new = BankMoneyMenu })
 
-  -- Tab visibility: MONEY MENU option AND setMoneyTabEnabled override.
-  local tabEnabledByOthers = true
-
-  local function tabEnabled()
-    return tabEnabledByOthers and mod.options:get("show_money_tab") == true
-  end
+  local moneyTab = core.makeTabToggle("show_money_tab")
+  local tabEnabled = moneyTab.enabled
 
   -- =========================================================================
   -- Public API for other mods. See API.md for the full reference.
   -- =========================================================================
-  mod.exports.bankMoney = function() return bankMoney() end
+  mod.exports.bankMoney = bankMoney
 
   mod.exports.depositMoney = function(amount)
     local ok, err = depositMoney(amount)
@@ -293,11 +282,8 @@ function Module.install(mod, core)
   mod.exports.maxMoney = MAX_MONEY
   mod.exports.moneyScreenId = SCREEN_ID
 
-  mod.exports.setMoneyTabEnabled = function(enabled)
-    tabEnabledByOthers = enabled ~= false
-    return true
-  end
-  mod.exports.isMoneyTabEnabled = function() return tabEnabled() end
+  mod.exports.setMoneyTabEnabled = moneyTab.setEnabled
+  mod.exports.isMoneyTabEnabled = tabEnabled
 
   mod.log:info("Pokemon Bank: Money tab ready")
 
