@@ -74,6 +74,8 @@ function Module.install(mod, core)
     self.digitCount = #tostring(self.max)
     self.wallet = math.floor(opts.wallet or 0)
     self.bank = math.floor(opts.bank or 0)
+    self.walletLabel = opts.walletLabel or "MONEY"
+    self.bankLabel = opts.bankLabel or "BANK"
     self.onDone = opts.onDone -- onDone(amount | nil on cancel)
     self.title = opts.title
     self:setAmount(opts.start or 1)
@@ -85,8 +87,8 @@ function Module.install(mod, core)
       title = function() return self.title or "AMOUNT" end,
       rows = function()
         return {
-          { label = "MONEY", value = ("¥%d"):format(self.wallet), enabled = false },
-          { label = "BANK", value = ("¥%d"):format(self.bank), enabled = false },
+          { label = self.walletLabel, value = ("¥%d"):format(self.wallet), enabled = false },
+          { label = self.bankLabel, value = ("¥%d"):format(self.bank), enabled = false },
           { label = "AMOUNT", value = ("¥%d"):format(self.amount) },
         }
       end,
@@ -167,7 +169,7 @@ function Module.install(mod, core)
     local bankVal = ("¥%d"):format(self.bank)
     local digitsStr = table.concat(self.digits)
     local amountVal = "¥" .. digitsStr
-    local moneyLabel, bankLabel = "MONEY", "BANK"
+    local moneyLabel, bankLabel = self.walletLabel, self.bankLabel
     local gap = 1 -- min blank column between a left label and its right-aligned value
     local interior = math.max(
       #moneyLabel + gap + #moneyVal,
@@ -287,7 +289,12 @@ function Module.install(mod, core)
 
   mod.log:info("Pokemon Bank: Money tab ready")
 
-  return { screenId = SCREEN_ID, amountScreenId = AMOUNT_SCREEN_ID, tabEnabled = tabEnabled }
+  return {
+    screenId = SCREEN_ID,
+    amountScreenId = AMOUNT_SCREEN_ID,
+    tabEnabled = tabEnabled,
+    AmountBox = AmountBox,
+  }
 end
 
 return Module

@@ -46,6 +46,17 @@ A TM you deposit here is banked as the move it teaches (or adds a use to one alr
 - **DEPOSIT MONEY** opens an amount box showing your own MONEY and the Bank's BANK balance (Up/Down cycles the digit, Left/Right moves the cursor, START jumps to the max, A confirms, B cancels), capped by how much you're carrying.
 - **WITHDRAW MONEY** opens the same amount box, capped by both the Bank's own balance and how much room is left before your money would hit the game's own ¥999999 cap.
 
+### LINK
+
+Sends Pokémon, items, moves and money straight from your Bank to another player's, over the same LAN peer-to-peer connection or public relay the game's own **LINK CABLE** uses. Opening it asks to save the game first (defaulting to YES) -- a connection like this is exactly the kind of thing worth having a fresh save behind before it starts.
+
+1. Pick **LAN** or **ONLINE**. Under **LAN**, **HOST** shows the address for the other player to type in under **JOIN**. Under **ONLINE**, **HOST** shows a 6-character code for the other player to type in under **JOIN**, no shared network needed. Either way, both sides need the exact same LINK version and BANK data version -- a mismatch is refused with a message.
+2. Build what you're sending: **POKéMON**, **ITEMS** and **MOVES** each browse BANK and SEND (SELECT toggles between them; picking a Pokémon or a quantity of an item/move offers **SEND**/**TAKE BACK** and **STATS**), **MONEY** does the same with **SEND MONEY**/**TAKE BACK**. **CONFIRM** shows a summary and waits for the other player to confirm too. **CANCEL** ends the link and returns everything you'd set aside.
+3. Once both sides confirm, each one's parcel is on its way: review what's arriving (**POKéMON**, opening straight to its STATS/**ITEMS**/**MOVES**/**MONEY**, read-only), already checked against your own game -- anything it doesn't recognize (a Pokémon, item or move only the other player's mods know about) shows up under **LOST** instead of the normal rows, exactly like **VIEW LOST**. **CONFIRM** again, **GO BACK** to STEP 2 (pulls the other player back with you), or **CANCEL** -- either way, at this point, still with no changes on either side.
+4. Once both sides confirm the second time, it all lands in your Bank for good -- whatever was under **LOST** goes straight into the Bank's own quarantine, same as anything a save-load sets aside -- and the game saves immediately.
+
+**This isn't a trade.** LINK moves Pokémon straight from one Bank to another, not between two parties the way the game's own trade does -- so a Pokémon that evolves by trading won't evolve just from crossing over this way. That's intentional.
+
 ## Options
 
 LABEL|CHOICES|DEFAULT|DESCRIPTION|
@@ -55,6 +66,7 @@ POKéMON MENU*|ON / OFF|ON|Turns the POKéMON tab on or off.
 ITEMS MENU*|ON / OFF|ON|Turns the ITEMS tab on or off.
 MOVES MENU*|ON / OFF|ON|Turns the MOVES tab on or off.
 MONEY MENU*|ON / OFF|ON|Turns the MONEY tab on or off.
+LINK MENU*|ON / OFF|ON|Turns the LINK tab on or off.
 INHERIT TRAINER|ON / OFF|OFF|Makes every withdrawn Pokémon become yours (OT, OT ID and OT name).
 AUTO HEAL|NEVER / ON DEPOSIT / ON WITHDRAW / AT POKéMON CENTER|NEVER|Fully heals a Pokémon at the chosen moment (**AT POKéMON CENTER** heals the whole Bank).
 LOAD REPORT|NONE / MESSAGE / REPORT|REPORT|Controls how you're notified when a load moves anything to or from quarantine.

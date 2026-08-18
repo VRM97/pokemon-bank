@@ -673,6 +673,10 @@ function Module.install(mod, core)
     return not blockTmDeposit("TM_")
   end
 
+  mod.exports.getTmItemDepositOverride = function()
+    return tmItemDepositOverride
+  end
+
   mod.exports.itemsScreenId = SCREEN_ID
 
   mod.exports.setItemsTabEnabled = itemsTab.setEnabled

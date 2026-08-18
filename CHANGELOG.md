@@ -1,5 +1,13 @@
 # Changelog
 
+New **LINK** tab: connect directly to another player, over LAN or ONLINE, and transfer Pokémon, items, moves and money straight from your Bank to theirs. Build a parcel in SEND, CONFIRM, then review what's arriving (checked against your own game's data, with anything it doesn't recognize broken out into **LOST**) and CONFIRM again. CANCEL at any point, or a broken connection, always hands back whatever you'd set aside. **A TM that arrived as a plain item stays a plain item**.
+
+New **LINK MENU** option toggles the whole LINK tab.
+
+New exports: `openLinkMenu`, `linkScreenId`, `isLinkTabEnabled`/`setLinkTabEnabled`,  `getTmItemDepositOverride()`.
+
+Requires the new `network` permission to open the connection.
+
 ## 1.10.0
 
 New **MOVES** tab: a fourth Bank storage for TMs, with **DEPOSIT MOVE**, **WITHDRAW MOVE**, **TEACH MOVE** (teaches a banked move straight to a Pokémon, no TM needed -- free with Reusable Machines installed) and **RELEARN MOVE** (restores moves a Pokémon lost, mostly automatic on load). TMs now go through DEPOSIT MOVE instead of DEPOSIT ITEM/MOVE ITEM, unless the tab is off, in which case they fall back to depositing as plain items. Banked and known moves now survive an unrecognized id or a missing TM without loss.

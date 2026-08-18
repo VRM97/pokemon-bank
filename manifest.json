@@ -11,7 +11,8 @@
   "affects_link": false,
   "games": ["gen1", "gen2"],
   "permissions": [
-    "engine_internals"
+    "engine_internals",
+    "network"
   ],
   "dependencies": [],
   "optional_dependencies": [
@@ -21,5 +22,5 @@
   ],
   "conflicts": [],
   "github": "VRM97/pokemon-bank",
-  "description": "A second, independent storage for Pokémon, items, moves and money that lives outside any save file: deposit a Pokémon, item, TM's move or money in one playthrough (any of Red/Blue/Yellow, any save slot) and withdraw it in another. HMs and key items can never be deposited. Exposes a full API (mod.exports) so other mods can deposit, withdraw, list and query the Bank's contents."
+  "description": "A second, independent storage for Pokémon, items, moves and money that lives outside any save file: deposit a Pokémon, item, move or money in one playthrough and withdraw it in another. Connect two players over LAN or online to send each other Pokémon, items, moves and money directly, Bank to Bank."
 }

@@ -43,6 +43,17 @@ function Module.install(mod, core)
     }
   end
 
+  local function freshLinkCartTotals()
+    return { pokemon = 0, items = 0, moves = 0, money = 0 }
+  end
+
+  local function freshLinkTotals()
+    return {
+      completed = 0, cancelled = 0,
+      sent = freshLinkCartTotals(), received = freshLinkCartTotals(),
+    }
+  end
+
   -- Shape shared by the global file and each save's own bucket -- species/peakMoney only make sense at the shared-Bank level, so they're added on top of this in freshGlobal.
   local function freshCounters()
     return {
@@ -51,6 +62,7 @@ function Module.install(mod, core)
       items = freshItemTotals(),
       moves = freshMoveTotals(),
       money = freshMoneyTotals(),
+      link = freshLinkTotals(),
     }
   end
 
@@ -83,6 +95,15 @@ function Module.install(mod, core)
     c.money = type(c.money) == "table" and c.money or {}
     for _, key in ipairs({ "depositedOps", "depositedTotal", "withdrawnOps", "withdrawnTotal" }) do
       c.money[key] = num(c.money[key])
+    end
+    c.link = type(c.link) == "table" and c.link or {}
+    c.link.completed = num(c.link.completed)
+    c.link.cancelled = num(c.link.cancelled)
+    for _, side in ipairs({ "sent", "received" }) do
+      c.link[side] = type(c.link[side]) == "table" and c.link[side] or {}
+      for _, key in ipairs({ "pokemon", "items", "moves", "money" }) do
+        c.link[side][key] = num(c.link[side][key])
+      end
     end
     return c
   end
@@ -275,6 +296,27 @@ function Module.install(mod, core)
     markDirty()
   end)
 
+  -- A completed LINK exchange counts as one transaction of its own on top of whatever the individual item/move/money deposits inside it already added (lib/Link.lua's applyReceived routes those through the same exported deposit calls above) -- a cancelled one refunds everything it took out, so it adds nothing beyond its own tally.
+  mod.events:on("mod.vrm_pokemon_bank.link_completed", function(ev)
+    local g, s = loadGlobal(), saveCounters()
+    g.transactions, s.transactions = g.transactions + 1, s.transactions + 1
+    g.link.completed, s.link.completed = g.link.completed + 1, s.link.completed + 1
+    for _, side in ipairs({ "sent", "received" }) do
+      local counts = ev and ev[side]
+      for _, key in ipairs({ "pokemon", "items", "moves", "money" }) do
+        local v = num(counts and counts[key])
+        g.link[side][key], s.link[side][key] = g.link[side][key] + v, s.link[side][key] + v
+      end
+    end
+    markDirty()
+  end)
+
+  mod.events:on("mod.vrm_pokemon_bank.link_cancelled", function()
+    local g, s = loadGlobal(), saveCounters()
+    g.link.cancelled, s.link.cancelled = g.link.cancelled + 1, s.link.cancelled + 1
+    markDirty()
+  end)
+
   -- =========================================================================
   -- Read side: deep-ish copies, same "a copy, not a live reference" contract as listItems()/getBox() elsewhere in this mod.
   -- =========================================================================
@@ -295,6 +337,11 @@ function Module.install(mod, core)
       money = {
         depositedOps = c.money.depositedOps, depositedTotal = c.money.depositedTotal,
         withdrawnOps = c.money.withdrawnOps, withdrawnTotal = c.money.withdrawnTotal,
+      },
+      link = {
+        completed = c.link.completed, cancelled = c.link.cancelled,
+        sent = { pokemon = c.link.sent.pokemon, items = c.link.sent.items, moves = c.link.sent.moves, money = c.link.sent.money },
+        received = { pokemon = c.link.received.pokemon, items = c.link.received.items, moves = c.link.received.moves, money = c.link.received.money },
       },
     }
   end
@@ -327,23 +374,51 @@ function Module.install(mod, core)
   local function fmtMoney(n) return ("¥%d"):format(n) end
   local function fmtQty(n) return "x" .. tostring(n) end
 
+  local function appendPokemonRows(rows, pokemon)
+    rows[#rows + 1] = { label = "PKMN IN", right = tostring(pokemon.deposited) }
+    rows[#rows + 1] = { label = "PKMN OUT", right = tostring(pokemon.withdrawn) }
+    rows[#rows + 1] = { label = "PKMN REL", right = tostring(pokemon.released) }
+  end
+
+  local function appendItemRows(rows, items)
+    rows[#rows + 1] = { label = "ITEM IN", right = fmtQty(items.depositedQty) }
+    rows[#rows + 1] = { label = "ITEM OUT", right = fmtQty(items.withdrawnQty) }
+    rows[#rows + 1] = { label = "ITEM TOSS", right = fmtQty(items.tossedQty) }
+  end
+
+  local function appendMoveRows(rows, moves)
+    rows[#rows + 1] = { label = "MOVE IN", right = fmtQty(moves.depositedQty) }
+    rows[#rows + 1] = { label = "MOVE OUT", right = fmtQty(moves.withdrawnQty) }
+    rows[#rows + 1] = { label = "TAUGHT", right = tostring(moves.taught) }
+  end
+
+  local function appendMoneyRows(rows, money)
+    rows[#rows + 1] = { label = "¥ IN", right = fmtMoney(money.depositedTotal) }
+    rows[#rows + 1] = { label = "¥ OUT", right = fmtMoney(money.withdrawnTotal) }
+  end
+
+  local function appendLinkRows(rows, link)
+    rows[#rows + 1] = { label = "LINK OK", right = tostring(link.completed) }
+    rows[#rows + 1] = { label = "LINK CANCEL", right = tostring(link.cancelled) }
+    rows[#rows + 1] = { label = "SENT PKMN", right = tostring(link.sent.pokemon) }
+    rows[#rows + 1] = { label = "SENT ITEM", right = fmtQty(link.sent.items) }
+    rows[#rows + 1] = { label = "SENT MOVE", right = fmtQty(link.sent.moves) }
+    rows[#rows + 1] = { label = "SENT ¥", right = fmtMoney(link.sent.money) }
+    rows[#rows + 1] = { label = "RECV PKMN", right = tostring(link.received.pokemon) }
+    rows[#rows + 1] = { label = "RECV ITEM", right = fmtQty(link.received.items) }
+    rows[#rows + 1] = { label = "RECV MOVE", right = fmtQty(link.received.moves) }
+    rows[#rows + 1] = { label = "RECV ¥", right = fmtMoney(link.received.money) }
+  end
+
   local function globalRows(game)
     local g = loadGlobal()
-    local rows = {
-      { label = "ACTIONS", right = tostring(g.transactions) },
-      { label = "PKMN IN", right = tostring(g.pokemon.deposited) },
-      { label = "PKMN OUT", right = tostring(g.pokemon.withdrawn) },
-      { label = "PKMN REL", right = tostring(g.pokemon.released) },
-      { label = "ITEM IN", right = fmtQty(g.items.depositedQty) },
-      { label = "ITEM OUT", right = fmtQty(g.items.withdrawnQty) },
-      { label = "ITEM TOSS", right = fmtQty(g.items.tossedQty) },
-      { label = "MOVE IN", right = fmtQty(g.moves.depositedQty) },
-      { label = "MOVE OUT", right = fmtQty(g.moves.withdrawnQty) },
-      { label = "TAUGHT", right = tostring(g.moves.taught) },
-      { label = "¥ IN", right = fmtMoney(g.money.depositedTotal) },
-      { label = "¥ OUT", right = fmtMoney(g.money.withdrawnTotal) },
-      { label = "¥ PEAK", right = fmtMoney(g.peakMoney) },
-    }
+    local rows = { { label = "ACTIONS", right = tostring(g.transactions) } }
+    appendPokemonRows(rows, g.pokemon)
+    appendItemRows(rows, g.items)
+    appendMoveRows(rows, g.moves)
+    appendMoneyRows(rows, g.money)
+    rows[#rows + 1] = { label = "¥ PEAK", right = fmtMoney(g.peakMoney) }
+    appendLinkRows(rows, g.link)
     local topId, topCount = topSpecies()
     if topId then
       local def = game and game.data and game.data.pokemon and game.data.pokemon[topId]
@@ -355,20 +430,13 @@ function Module.install(mod, core)
 
   local function saveRows()
     local s = saveCounters()
-    return {
-      { label = "ACTIONS", right = tostring(s.transactions) },
-      { label = "PKMN IN", right = tostring(s.pokemon.deposited) },
-      { label = "PKMN OUT", right = tostring(s.pokemon.withdrawn) },
-      { label = "PKMN REL", right = tostring(s.pokemon.released) },
-      { label = "ITEM IN", right = fmtQty(s.items.depositedQty) },
-      { label = "ITEM OUT", right = fmtQty(s.items.withdrawnQty) },
-      { label = "ITEM TOSS", right = fmtQty(s.items.tossedQty) },
-      { label = "MOVE IN", right = fmtQty(s.moves.depositedQty) },
-      { label = "MOVE OUT", right = fmtQty(s.moves.withdrawnQty) },
-      { label = "TAUGHT", right = tostring(s.moves.taught) },
-      { label = "¥ IN", right = fmtMoney(s.money.depositedTotal) },
-      { label = "¥ OUT", right = fmtMoney(s.money.withdrawnTotal) },
-    }
+    local rows = { { label = "ACTIONS", right = tostring(s.transactions) } }
+    appendPokemonRows(rows, s.pokemon)
+    appendItemRows(rows, s.items)
+    appendMoveRows(rows, s.moves)
+    appendMoneyRows(rows, s.money)
+    appendLinkRows(rows, s.link)
+    return rows
   end
 
   -- SELECT: BANK (every save that ever used this Bank) <-> THIS SAVE (just the active playthrough's own contribution). Read-only -- A and B both just close, same as the engine's own QuarantineReport.

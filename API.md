@@ -58,6 +58,7 @@ Every deposit stamps `mon.originGame` and `mon.originGeneration` the first time 
 - `blacklistItem(id)` -- adds `id` to the Bank's deposit blacklist, on top of the built-in HM/key-item rule. Additive only -- there is no way to lift the built-in rule for either. Lives only in memory: a mod that needs an id blacklisted calls this itself, every load (matches how `mod.options`/manifest declarations already work -- nothing here is a one-time registration that outlives the calling mod being loaded).
 - `setTmItemDepositAllowed(value)` -- forces `depositItem`'s own TM-vs-MOVES-tab rule one way or the other, overriding whatever the MOVES tab's own state would otherwise decide: `true` always lets a TM deposit as a plain item, `false` always refuses it, `nil` clears the override and hands the decision back to the MOVES tab (the default). Lives only in memory, same as `blacklistItem`. Returns `true`.
 - `isTmItemDepositAllowed()` -- the read side: whether a TM would deposit as a plain item right now, combining the override above (if any) with the MOVES tab's own state.
+- `getTmItemDepositOverride()` -- the raw override itself (`true`/`false`/`nil`), not `isTmItemDepositAllowed`'s computed effective value. For a caller that wants to force it one way and then put back exactly what was there before -- `nil` included, which a captured effective boolean can't tell apart from an explicit `false` -- rather than just turning it back off (LINK's own `depositItemSafe` does this around every deposit, so a TM already sitting as a plain item on either side of a transfer never gets quarantined over this side's own MOVES tab).
 
 ## Moves
 - `depositMove(id, qty)` -- adds `qty` banked uses of move `id`. Does **not** validate `id` against any game data, and does **not** touch any bag -- remove the matching TM stack from wherever you mean yourself first (mirrors what this mod's own DEPOSIT MOVE does, which only ever offers a move that's real). Returns `true`, or `false, "bad request"` for a bad `id`/`qty <= 0`.
@@ -92,7 +93,7 @@ On every `save.loaded`, this mod runs `validateStorage(game)` automatically (Pok
 
 ## Statistics
 
-Every deposit, withdrawal, release, teach and item/money transfer is tallied two ways: an all-time total shared by every save that ever used this Bank (`stats.lua`, next to `storage.lua`), and a per-save total scoped to just the active playthrough (written into that save's own `modData`, so it travels and rewinds with the save). Both share the same shape: `{ transactions, pokemon = { deposited, withdrawn, released }, items = { depositedOps, depositedQty, withdrawnOps, withdrawnQty, tossedOps, tossedQty }, moves = { depositedOps, depositedQty, withdrawnOps, withdrawnQty, taught }, money = { depositedOps, depositedTotal, withdrawnOps, withdrawnTotal } }`.
+Every deposit, withdrawal, release, teach, item/money transfer and LINK exchange is tallied two ways: an all-time total shared by every save that ever used this Bank (`stats.lua`, next to `storage.lua`), and a per-save total scoped to just the active playthrough (written into that save's own `modData`, so it travels and rewinds with the save). Both share the same shape: `{ transactions, pokemon = { deposited, withdrawn, released }, items = { depositedOps, depositedQty, withdrawnOps, withdrawnQty, tossedOps, tossedQty }, moves = { depositedOps, depositedQty, withdrawnOps, withdrawnQty, taught }, money = { depositedOps, depositedTotal, withdrawnOps, withdrawnTotal }, link = { completed, cancelled, sent = { pokemon, items, moves, money }, received = { pokemon, items, moves, money } } }`.
 
 - `getBankStats()` -- the all-time totals above, plus `peakMoney` (the Bank's own highest-ever balance) and `species` (a `{ speciesId = timesDeposited }` table). A copy, not a live reference.
 - `getSaveStats()` -- the active save's own contribution to those same totals, without `peakMoney`/`species` (those only mean something at the shared-Bank level). A copy, not a live reference.
@@ -115,6 +116,12 @@ Pokémon Bank adds a **POKéMON BANK** row to the PC's own main menu (the one of
 - `openBankMenu(game)` -- the main **POKéMON BANK** entry point itself: the same POKéMON/ITEMS/MOVES/MONEY chooser the PC's own **POKéMON BANK** row opens (skipping straight to that one tab, same as the row, when only one is enabled by `setPokemonTabEnabled`/etc and the player's own options). Lets another mod offer this mod's whole entry point from its own menu without routing through a PC. Returns `true` once it's opened something, `false` when every tab is off and there was nothing to open (the row itself just wouldn't appear at all in that case), or `nil, "no game"` without a `game`.
 - `open(game, tab)` -- a thin dispatcher over the four `openXxxMenu` calls above by name; `tab` is `"pokemon"` (default), `"items"`, `"moves"` or `"money"`. Kept for existing callers -- a new one is better off calling the named export directly.
 - `pokemonScreenId`, `itemsScreenId`, `movesScreenId`, `moneyScreenId` -- the registered screen ids (`mod.content.screens`) backing the four tabs, for a mod that wants to push them through its own navigation instead of `open`/`openXyzMenu`.
+
+## LINK
+
+- `openLinkMenu(game)` -- pushes the LINK connect screen, same as its own PC-menu row. Returns whatever `game.stack:push` returns, or `nil, "no game"` without one. Ignores the player's own **LINK MENU** option and `setLinkTabEnabled` below -- same convention as `openPokemonMenu`/etc, which bypass **SHOW IN PC MENU**/`setPcEntryEnabled` too.
+- `linkScreenId` -- **not** a `mod.content.screens` id (unlike `pokemonScreenId`/etc): LINK's screens are pushed straight onto `game.stack`, like **Pickers** below, so there's nothing to push it *through*. Present for identification only (e.g. a `screen.pushed` listener checking what's on top).
+- `setLinkTabEnabled(enabled)` / `isLinkTabEnabled()` -- same idea as `setPokemonTabEnabled`/etc: hide (`false`) or restore (`true`) the LINK side independent of the player's own **LINK MENU** option.
 
 ## Pickers
 
@@ -142,5 +149,7 @@ Every deposit, withdraw, release, teach and item/money transfer -- through this 
 - `mod.vrm_pokemon_bank.move_taught` -- `{ id, mon }`
 - `mod.vrm_pokemon_bank.money_deposited` -- `{ amount }`
 - `mod.vrm_pokemon_bank.money_withdrawn` -- `{ amount }`
+- `mod.vrm_pokemon_bank.link_completed` -- `{ sent, received }`, once a LINK exchange lands in the Bank (after both sides' second CONFIRM). `sent`/`received` are each `{ pokemon, items, moves, money }` -- `pokemon` a count, `items`/`moves` summed quantities, `money` a total.
+- `mod.vrm_pokemon_bank.link_cancelled` -- `{}`, whenever a LINK session ends any other way (CANCEL, a version mismatch, a dropped connection) and everything staged to send was handed back.
 
 `mod.events:on("mod.vrm_pokemon_bank.pokemon_deposited", function(payload) ... end)` subscribes the usual way. Remember `box`/`index` in a payload are only a snapshot -- see **Box numbering** above.

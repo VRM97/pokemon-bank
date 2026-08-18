@@ -143,13 +143,9 @@ function Module.install(mod, core)
   -- =========================================================================
   -- Move UI
   -- =========================================================================
-  local function moveName(game, id)
-    local def = game.data.moves[id]
-    return def and def.name or id
-  end
 
   local function sortedMoveIds(game, counts, filter)
-    return core.sortedIdsByName(function(id) return moveName(game, id) end, counts, filter)
+    return core.sortedIdsByName(function(id) return core.moveName(game, id) end, counts, filter)
   end
 
   -- Every banked move, TM or not right now -- TEACH MOVE's own list: teaching never touches an item, so a move that's still real but currently has no TM (see isValidMove in validateStorage above) belongs here just the same.
@@ -157,7 +153,7 @@ function Module.install(mod, core)
     local counts = loadStorage().moves
     local rows = {}
     for _, id in ipairs(sortedMoveIds(game, counts)) do
-      rows[#rows + 1] = { value = id, label = core.truncateName(moveName(game, id)), right = "x" .. tostring(counts[id]) }
+      rows[#rows + 1] = { value = id, label = core.truncateName(core.moveName(game, id)), right = "x" .. tostring(counts[id]) }
     end
     return rows
   end
@@ -234,7 +230,7 @@ function Module.install(mod, core)
           list.index = math.min(list.index, math.max(1, #list.items))
           list._footerIndex = list.index
           playSound(game, "Withdraw_Deposit")
-          list.footer = Strings("%s was\nstored in BANK.", moveName(game, moveId))
+          list.footer = Strings("%s was\nstored in BANK.", core.moveName(game, moveId))
         end)
       end,
     })
@@ -558,7 +554,7 @@ function Module.install(mod, core)
       local moves = recoverableMoves(game, mon.bankId)
       local rows = {}
       for _, mv in ipairs(moves) do
-        rows[#rows + 1] = { value = mv, label = core.truncateName(moveName(game, entryMoveId(mv))) }
+        rows[#rows + 1] = { value = mv, label = core.truncateName(core.moveName(game, entryMoveId(mv))) }
       end
       return rows
     end

@@ -25,6 +25,7 @@ function Module.install(mod, core)
   local message = core.message
   local monName = core.monName
   local attachLevelIcons = core.attachLevelIcons
+  local openSummary = core.openSummary
 
   local function playCry(game, species)
     pcall(function() require("src.core.Sound").playCry(game.data, species) end)
@@ -209,21 +210,6 @@ function Module.install(mod, core)
       if mon.catchRate == nil then mon.catchRate = def.catchRate end
     end
     return mon
-  end
-
-  -- Gold's builtins carry a "Gen2" prefix -- Screens.push does not translate a Gen 1 id on its own, so the STATS submenu below has to pick the right one itself.
-  -- reshapeForActiveGame run here too so a look at STATS is never stale, whether or not the mon ends up actually leaving the Bank.
-  local function openSummary(game, mon)
-    reshapeForActiveGame(game, mon)
-    local Screens = require("src.ui.Screens")
-    if GameVersion.generation() == 2 then
-      Screens.push(game, "Gen2SummaryMenu", {
-        mon = mon,
-        onClose = function() game.stack:pop() end,
-      })
-    else
-      Screens.push(game, "SummaryMenu", mon)
-    end
   end
 
   -- Mirrors Evolution's own seen/owned write. Never called on release or on a move that stays inside the Bank -- see API.md's withdrawPokemon entry.
@@ -1491,6 +1477,8 @@ function Module.install(mod, core)
     moveScreenId = MOVE_SCREEN_ID,
     tabEnabled = tabEnabled,
     validateStorage = validateStorage,
+    withdrawMon = withdrawMon,
+    depositMon = depositMon,
   }
 end
 

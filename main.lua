@@ -26,6 +26,7 @@ local OPTION_SCHEMA = {
   { key = "show_items_tab", label = "ITEMS MENU", type = "toggle", default = true },
   { key = "show_moves_tab", label = "MOVES MENU", type = "toggle", default = true },
   { key = "show_money_tab", label = "MONEY MENU", type = "toggle", default = true },
+  { key = "show_link_tab", label = "LINK MENU", type = "toggle", default = true },
   { key = "inherit_trainer_on_withdraw", label = "INHERIT TRAINER", type = "toggle", default = false },
   { key = "auto_heal", label = "AUTO HEAL", type = "choice", default = "never",
     choices = {
@@ -557,6 +558,10 @@ return function(mod)
     pcall(function() require("src.core.Sound").play(game.data, name) end)
   end
 
+  local function playSaveSound(game)
+    playSound(game, GameVersion.generation() == 2 and "Sfx_Save" or "Save")
+  end
+
   local function itemName(game, id)
     local def = game.data.items[id]
     return def and def.name or id
@@ -612,9 +617,28 @@ return function(mod)
     return mon.nickname or mon.name or (def and def.name) or tostring(mon.species)
   end
 
+  local function moveName(game, id)
+    local def = game.data.moves and game.data.moves[id]
+    return (def and def.name) or id
+  end
+
   -- A move slot's own id, whichever shape it's stored in: a plain string in most tables, or `{ id = ..., pp = ... }` on a mon's own moves/orphaned.monMoves entries. Shared by lib/Pokemon.lua and lib/Moves.lua.
   local function moveEntryId(mv)
     return type(mv) == "table" and mv.id or mv
+  end
+
+  -- Gold's builtins carry a "Gen2" prefix -- Screens.push does not translate a Gen 1 id on its own, so this picks the right one itself. reshapeForActiveGame run here too so a look at STATS is never stale, whether or not the mon ends up actually leaving the Bank (mod.exports rather than a direct reference: Pokemon.lua, which owns that function, installs after this is defined). Lives here instead of lib/Pokemon.lua so lib/Link.lua's own SEND/RECEIVE lists can open the same STATS screen without a dependency on Pokemon.lua's internals.
+  local function openSummary(game, mon)
+    mod.exports.reshapeForActiveGame(game, mon)
+    local Screens = require("src.ui.Screens")
+    if GameVersion.generation() == 2 then
+      Screens.push(game, "Gen2SummaryMenu", {
+        mon = mon,
+        onClose = function() game.stack:pop() end,
+      })
+    else
+      Screens.push(game, "SummaryMenu", mon)
+    end
   end
 
   local function makeTabToggle(optionKey)
@@ -640,6 +664,7 @@ return function(mod)
     publicRows = publicRows,
     message = message,
     playSound = playSound,
+    playSaveSound = playSaveSound,
     itemName = itemName,
     sortedItemIds = sortedItemIds,
     sortedIdsByName = sortedIdsByName,
@@ -650,6 +675,7 @@ return function(mod)
     askQuantity = askQuantity,
     attachLevelIcons = attachLevelIcons,
     monName = monName,
+    moveName = moveName,
     makeTabToggle = makeTabToggle,
     fs = fs,
     fileExists = fileExists,
@@ -657,7 +683,9 @@ return function(mod)
     tryWrite = tryWrite,
     tryRemove = tryRemove,
     STORAGE_DIR = STORAGE_DIR,
+STORAGE_VERSION = STORAGE_VERSION,
     truncateName = truncateName,
+    openSummary = openSummary,
   }
 
   local Pokemon = V.require("Pokemon").install(mod, core)
@@ -667,6 +695,7 @@ return function(mod)
   local Money = V.require("Money").install(mod, core)
   Stats = V.require("Stats").install(mod, core)
   Lost = V.require("Lost").install(mod, core)
+  local Link = V.require("Link").install(mod, core, Pokemon, Money)
 
   mod.hooks:wrap("save.write", function(next_, game)
     local proceed = next_(game)
@@ -832,15 +861,31 @@ return function(mod)
     end
   end)
 
+  -- LINK opens a real network connection and, on a successful exchange, force-writes both the active save and the Bank -- asking to save first (defaulting to YES, matching the game's own SAVE THE GAME? prompts) means whatever's in progress right now is safe on disk before that starts, whichever way the session ends. markDirty() runs even though nothing in the Bank has actually changed yet, purely so the writeSave below actually flushes storage.lua (flushStorage is a no-op while dirty is still false) -- that rolls the current storage.lua into storage.lua.bak first, giving RESTORE DATA above a known-good snapshot from right before the session if something goes wrong during it that this mod didn't otherwise catch.
+  local function confirmLinkSave(game)
+    game.stack:push(TextBox.new(game, "Before opening the\nlink, you have to\011SAVE the game.", function()
+      game.stack:push(ChoiceBox.new(game, function(yes)
+        if yes then
+          markDirty()
+          if game.writeSave then game:writeSave() end
+          playSaveSound(game)
+          Link.open(game)
+        end
+      end))
+    end))
+  end
+
   -- Entry point: a row on the PC's main menu opening a small POKéMON / ITEMS / MOVES / MONEY chooser.
   -- With two or more tabs enabled, opens a chooser listing just the enabled ones. With only one enabled, skips the chooser and opens that tab directly. Never called with none enabled. Returns true when it opened something (the chooser or, with just one tab on, that tab directly), false when every tab was off and there was nothing to open -- mod.exports.openBankMenu below just forwards this.
   local function openBankMenu(game)
-    local pokeOn, itemsOn, movesOn, moneyOn = Pokemon.tabEnabled(), Items.tabEnabled(), Moves.tabEnabled(), Money.tabEnabled()
+    local pokeOn, itemsOn, movesOn, moneyOn, linkOn =
+      Pokemon.tabEnabled(), Items.tabEnabled(), Moves.tabEnabled(), Money.tabEnabled(), Link.tabEnabled()
     local rows = {}
     if pokeOn then rows[#rows + 1] = { label = "POKéMON", onSelect = function() mod.ui.push(game, Pokemon.screenId) end } end
     if itemsOn then rows[#rows + 1] = { label = "ITEMS", onSelect = function() mod.ui.push(game, Items.screenId) end } end
     if movesOn then rows[#rows + 1] = { label = "MOVES", onSelect = function() mod.ui.push(game, Moves.screenId) end } end
     if moneyOn then rows[#rows + 1] = { label = "MONEY", onSelect = function() mod.ui.push(game, Money.screenId) end } end
+    if linkOn then rows[#rows + 1] = { label = "LINK", onSelect = function() confirmLinkSave(game) end } end
     if #rows == 0 then return false end
     if #rows == 1 then
       rows[1].onSelect()
