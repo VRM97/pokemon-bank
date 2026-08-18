@@ -357,6 +357,30 @@ return function(mod)
     confirmImport(game, decoded)
   end
 
+  -- Rolls storage.lua back to storage.lua.bak -- the copy flushStorage takes of whatever storage.lua held right before its last write (see README.md's Where the data lives). Validity checked (same decoded.boxes test importBank uses) before the confirmation even shows, not after YES, so a missing or corrupt backup is just reported instead of asking a question there's no point asking.
+  local function restoreBank(game, decoded)
+    storage = decoded
+    migrateStorage(storage)
+    normalizeBoxes(storage)
+    markDirty()
+    flushStorage()
+    message(game, "BANK data was\nrestored from\nbackup.")
+  end
+
+  local function confirmRestoreBank(game)
+    local decoded = readStorageFile(STORAGE_BACKUP)
+    if type(decoded) ~= "table" or type(decoded.boxes) ~= "table" then
+      message(game, "No valid backup\nwas found to\nrestore.")
+      return
+    end
+    game.stack:push(TextBox.new(game,
+      "Restore BANK data\nfrom the last\nbackup? Current\ndata will be lost.", function()
+      game.stack:push(ChoiceBox.new(game, function(yes)
+        if yes then restoreBank(game, decoded) end
+      end, { defaultNo = true }))
+    end))
+  end
+
   -- Removes every file this mod is known to have written under STORAGE_DIR, then the (by then empty) folder itself -- see KNOWN_STORAGE_FILES for why this isn't a directory listing.
   local function wipeStorageDir()
     local f = fs()
@@ -467,6 +491,7 @@ return function(mod)
         items[#items + 1] = { label = "VIEW LOST", onSelect = function() mod.ui.push(game, Lost.screenId) end }
         -- items[#items + 1] = { label = "EXPORT DATA", onSelect = function() exportBank(game) end }
         -- items[#items + 1] = { label = "IMPORT DATA", onSelect = function() importBank(game) end }
+        items[#items + 1] = { label = "RESTORE DATA", onSelect = function() confirmRestoreBank(game) end }
         items[#items + 1] = { label = "DELETE DATA", onSelect = function() confirmDeleteBank(game) end }
         items[#items + 1] = { label = "CANCEL" }
         return items

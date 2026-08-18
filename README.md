@@ -75,13 +75,15 @@ LOAD REPORT|NONE / MESSAGE / REPORT|REPORT|Controls how you're notified when a l
 
 ### Game OPTIONS menu
 
-The game's own **OPTIONS** menu has a **POKéMON BANK** row, independent of **SHOW IN PC MENU**: it opens a page with every option above, followed by ~~five~~ three actions:
-
-- **VIEW STATS** shows a running log of everything the Bank has ever handled. SELECT switches between all-time totals and just this save's own contribution.
-- **VIEW LOST** browses whatever's currently quarantined (Pokémon, items and banked moves the active game doesn't recognize right now). SELECT cycles between the three lists. Read-only, same data the load-time **LOAD REPORT** summarizes; each entry moves itself back automatically once viewed from a game that recognizes it again.
-- ~~**EXPORT DATA\*** writes the Bank's entire contents to `bank/export.lua`, backing up any previous export first.~~
-- ~~**IMPORT DATA\*** reads that file back in and, after confirming, **replaces the Bank's current contents with it**.~~
-- **DELETE DATA\*** erases the Bank entirely and asks **twice** first, since it can't be undone. Each save's own stats are untouched, since they live in the save, not the Bank.
+The game's own **OPTIONS** menu has a **POKéMON BANK** row: it opens a page with every option above, followed by:
+LABEL|DESCRIPTION
+-|-
+VIEW STATS|Shows a running log of everything the Bank has ever handled. SELECT switches between all-time totals and just this save's own contribution.
+VIEW LOST|Browses whatever's currently quarantined (Pokémon, items and banked moves the active game doesn't recognize right now). SELECT cycles between the three lists.
+~~EXPORT DATA\*~~|~~Writes the Bank's entire contents to `bank/export.lua`, backing up any previous export first.~~
+~~IMPORT DATA\*~~|~~Reads that file back in and, after confirming, **replaces the Bank's current contents with it**.~~
+RESTORE DATA\*|Rolls the Bank back to its last backup (see **Where the data lives**), after confirming.
+DELETE DATA\*|Erases the Bank entirely and asks **twice** first, since it can't be undone. Each save's own stats are untouched, since they live in the save, not the Bank.
 
 *\* Take effect on disk immediately.*
 

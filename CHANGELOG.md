@@ -4,6 +4,8 @@ New **LINK** tab: connect directly to another player, over LAN or ONLINE, and tr
 
 New **LINK MENU** option toggles the whole LINK tab.
 
+New **RESTORE DATA** row on the game's own OPTIONS > POKéMON BANK page, above DELETE DATA: rolls the Bank back to that backup after confirming.
+
 New exports: `openLinkMenu`, `linkScreenId`, `isLinkTabEnabled`/`setLinkTabEnabled`,  `getTmItemDepositOverride()`.
 
 Requires the new `network` permission to open the connection.
