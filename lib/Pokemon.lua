@@ -31,7 +31,21 @@ function Module.install(mod, core)
     pcall(function() require("src.core.Sound").playCry(game.data, species) end)
   end
 
+  local function gen2StatsComplete(stats)
+    return stats and type(stats.hp) == "number" and type(stats.attack) == "number" and type(stats.defense) == "number" and type(stats.speed) == "number" and type(stats.specialAttack) == "number" and type(stats.specialDefense) == "number"
+  end
+
   local function ensureStats(game, mon)
+    if type(mon) ~= "table" then return mon end
+    if GameVersion.generation() == 2 then
+      if gen2StatsComplete(mon.stats) then return mon end
+      local def = game.data.pokemon[mon.species]
+      if not (def and def.baseStats) then return mon end
+      local stats = require("src.battle.gen2.Mon").stats(def.baseStats, mon.dvs or {}, mon.level or 1, mon.statExp)
+      mon.stats = stats
+      mon.hp = math.max(0, math.min(tonumber(mon.hp) or stats.hp, stats.hp))
+      return mon
+    end
     local def = game.data.pokemon[mon.species]
     if def then Stats.ensure(def, mon) end
     return mon
