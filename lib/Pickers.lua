@@ -1,25 +1,15 @@
 local V = ...
 
-local Strings = require("src.core.Strings")
-local ListMenu = require("src.ui.ListMenu")
-local Font = require("src.render.Font")
 local Boxes = require("src.pokemon.Boxes")
 local Bag = require("src.inventory.Bag")
 
-local Pickers = {}
-
-Pickers.MON_PICKER_SCREEN_ID = "PokemonBankMonPicker"
-Pickers.ITEM_PICKER_SCREEN_ID = "PokemonBankItemPicker"
-Pickers.BOX_PICKER_SCREEN_ID = "PokemonBankBoxPicker"
-
 local VIEW_LABELS = { bank = "BANK", party = "PARTY", pc = "PC", bag = "BAG" }
 
--- Next entry in a SELECT cycle, wrapping past the last back to the first.
-local function nextView(views, current)
-  local idx = 1
-  for i, v in ipairs(views) do if v == current then idx = i break end end
-  return views[(idx % #views) + 1]
-end
+local Pickers = {
+  MON_PICKER_SCREEN_ID = "PokemonBankMonPicker",
+  ITEM_PICKER_SCREEN_ID = "PokemonBankItemPicker",
+  BOX_PICKER_SCREEN_ID = "PokemonBankBoxPicker"
+}
 
 function Pickers.openMonPicker(mod, core, game, opts)
   opts = opts or {}
@@ -30,19 +20,10 @@ function Pickers.openMonPicker(mod, core, game, opts)
   if #views == 0 then return nil, "no views enabled" end
   Boxes.ensure(game.save)
   local loadStorage = core.loadStorage
-  local viewIdx = 1
-  for i, v in ipairs(views) do
-    if v == opts.startView then viewIdx = i end
-  end
   local state = {
-    view = views[viewIdx],
     bankBox = loadStorage().currentBox,
     pcBox = math.max(1, math.min(Boxes.COUNT, game.save.currentBox or 1)),
   }
-
-  local screen = { isOpaque = true }
-  local list
-  local rebuild, cycleView, cycleBox, backHandler, chooseCurrent
 
   local function boxNumFor(view)
     if view == "bank" then return state.bankBox
@@ -57,9 +38,9 @@ function Pickers.openMonPicker(mod, core, game, opts)
   end
 
   local function defaultTitle()
-    if state.view == "bank" then return Strings("BANK BOX %d", state.bankBox)
+    if state.view == "bank" then return core.boxLabel(loadStorage(), state.bankBox)
     elseif state.view == "party" then return "PARTY"
-    else return Strings("PC BOX %d", state.pcBox) end
+    else return core.pcBoxLabel(game, state.pcBox) end
   end
 
   local function viewTitle()
@@ -67,107 +48,71 @@ function Pickers.openMonPicker(mod, core, game, opts)
     return defaultTitle()
   end
 
-  cycleView = function()
-    if #views <= 1 then return end
-    state.view = nextView(views, state.view)
-    rebuild()
-  end
+  local group, cycleBox
+  local backHandler = core.cancelHandler(game, opts)
 
   cycleBox = function(delta)
     if state.view == "bank" then
-      local n = #loadStorage().boxes
-      if n <= 1 then return end
-      state.bankBox = ((state.bankBox - 1 + delta) % n) + 1
-      rebuild()
+      state.bankBox = core.cycleBoxNumber(state.bankBox, #loadStorage().boxes, delta)
+      group.rebuild()
     elseif state.view == "pc" then
-      state.pcBox = ((state.pcBox - 1 + delta) % Boxes.COUNT) + 1
-      rebuild()
+      state.pcBox = core.cycleBoxNumber(state.pcBox, Boxes.COUNT, delta)
+      group.rebuild()
     end
   end
 
-  rebuild = function()
-    core.clampBoxState(state, loadStorage, Boxes.COUNT)
-    local src = currentList()
-    local rows = {}
-    for i, mon in ipairs(src) do
-      local right = opts.rowRight and opts.rowRight(mon, state.view, boxNumFor(state.view), i)
-      rows[#rows + 1] = { label = core.monName(game, mon), value = i, right = right }
-    end
-    list = ListMenu.new(game, viewTitle(), rows, {
-      noSound = true, rows = 6, wrap = true,
-      onChoose = function(item)
-        local mon = src[item.value]
-        if not mon then return end
-        if opts.onChoose then
-          opts.onChoose(mon, { view = state.view, box = boxNumFor(state.view), index = item.value })
-        end
-      end,
-    })
-    core.attachLevelIcons(list, src, 0)
-    if opts.footer then
-      list.footer = opts.footer(state.view, #views > 1 and VIEW_LABELS[nextView(views, state.view)] or nil)
-    elseif #views > 1 then
-      list.footer = "SELECT: " .. VIEW_LABELS[nextView(views, state.view)]
-    end
-  end
-
-  backHandler = function()
-    game.stack:pop()
-    if opts.onCancel then opts.onCancel() end
-  end
-
-  chooseCurrent = function()
-    core.chooseListCurrent(list, backHandler)
-  end
-
-  function screen:update(dt)
-    local input = game.input
-    if input:wasPressed("select") then
-      cycleView()
-      return
-    elseif input:wasPressed("left") then
-      cycleBox(-1)
-      return
-    elseif input:wasPressed("right") then
-      cycleBox(1)
-      return
-    elseif input:wasPressed("b") then
-      backHandler()
-      return
-    end
-    list:update(dt)
-  end
-
-  function screen:draw()
-    list:draw()
-    local total = #list.items
-    local text = Strings("%d/%d", total > 0 and list.index or 0, total)
-    love.graphics.setColor(0, 0, 0, 1)
-    Font.draw(text, 160 - 8 - Font.width(text), 4)
-    love.graphics.setColor(1, 1, 1, 1)
-  end
-
-  screen.screenId = Pickers.MON_PICKER_SCREEN_ID
-  screen.gen1ModernUi = core.gen1ModernUiListAdapter(function() return list end, {
-    title = function() return viewTitle() end,
-    left = function() cycleBox(-1) end,
-    right = function() cycleBox(1) end,
-    select = function(payload)
-      if payload then core.setListCursor(list, payload) end
-      chooseCurrent()
+  group = core.listGroup(game, {
+    screenId = Pickers.MON_PICKER_SCREEN_ID,
+    counter = true,
+    views = views,
+    state = state,
+    startView = opts.startView,
+    onClose = backHandler,
+    title = viewTitle,
+    label = function(view) return VIEW_LABELS[view] end,
+    footer = opts.footer,
+    dynamicFooter = opts.dynamicFooter and function(view, item, nextLabel)
+      local mon = item and currentList()[item.value]
+      return opts.dynamicFooter(mon, view, nextLabel)
+    end or nil,
+    build = function()
+      core.clampBoxState(state, loadStorage, Boxes.COUNT)
+      local src = currentList()
+      local rows = {}
+      for i, mon in ipairs(src) do
+        local sub = opts.rowRight and opts.rowRight(mon, state.view, boxNumFor(state.view), i)
+        rows[#rows + 1] = { label = core.monName(game, mon), value = i, sub = sub }
+      end
+      local listOpts = {
+        messageBox = true, noSound = true, rows = opts.rows, wrap = true,
+        onChoose = function(item)
+          local mon = src[item.value]
+          if not mon then return end
+          if opts.onChoose then
+            opts.onChoose(mon, { view = state.view, box = boxNumFor(state.view), index = item.value })
+          end
+        end,
+      }
+      return rows, listOpts, not opts.rowRight and src or nil
     end,
-    back = function() backHandler() end,
-    start = function() cycleView() end,
+    extraKeys = function(input)
+      if input:wasPressed("left") then cycleBox(-1); return true end
+      if input:wasPressed("right") then cycleBox(1); return true end
+      return false
+    end,
+    modernUi = {
+      left = function() cycleBox(-1) end,
+      right = function() cycleBox(1) end,
+      select = function(payload)
+        if payload then core.setListCursor(group.screen.list, payload) end
+        core.chooseListCurrent(group.screen.list, backHandler)
+      end,
+    },
   })
 
-  rebuild()
-  game.stack:push(screen)
+  game.stack:push(group.screen)
 
-  return {
-    refresh = function() rebuild() end,
-    setFooter = function(msg) list.footer = msg end,
-    close = function() game.stack:pop() end,
-  }
+  return core.pickerHandle(game, group)
 end
 
 function Pickers.openMovePicker(mod, core, game, opts)
@@ -191,15 +136,7 @@ function Pickers.openItemPicker(mod, core, game, opts)
 
   game.save.pcItems = game.save.pcItems or {}
   local loadStorage = core.loadStorage
-  local viewIdx = 1
-  for i, v in ipairs(views) do
-    if v == opts.startView then viewIdx = i end
-  end
-  local state = { view = views[viewIdx] }
-
-  local screen = { isOpaque = true }
-  local list
-  local rebuild, cycleView, backHandler, chooseCurrent
+  local state = {}
 
   local function currentCounts()
     if state.view == "bank" then return loadStorage().items
@@ -217,81 +154,48 @@ function Pickers.openItemPicker(mod, core, game, opts)
     return VIEW_LABELS[state.view]
   end
 
-  cycleView = function()
-    if #views <= 1 then return end
-    state.view = nextView(views, state.view)
-    rebuild()
-  end
+  local group
+  local backHandler = core.cancelHandler(game, opts)
 
-  rebuild = function()
-    local counts = currentCounts()
-    local rows = {}
-    for _, id in ipairs(currentIds()) do
-      local count = counts[id]
-      if count and count > 0 then
-        local right = opts.rowRight and opts.rowRight(id, count, state.view) or ("x" .. tostring(count))
-        rows[#rows + 1] = { value = id, label = core.truncateName(core.itemName(game, id)), right = right }
+  group = core.listGroup(game, {
+    screenId = Pickers.ITEM_PICKER_SCREEN_ID,
+    counter = true,
+    views = views,
+    state = state,
+    startView = opts.startView,
+    onClose = backHandler,
+    title = viewTitle,
+    label = function(view) return VIEW_LABELS[view] end,
+    footer = opts.footer,
+    build = function()
+      local counts = currentCounts()
+      local rows = {}
+      for _, id in ipairs(currentIds()) do
+        local count = counts[id]
+        if count and count > 0 then
+          local right = opts.rowRight and opts.rowRight(id, count, state.view) or ("x" .. tostring(count))
+          rows[#rows + 1] = { value = id, label = core.truncateName(core.itemName(game, id)), right = right }
+        end
       end
-    end
-    list = ListMenu.new(game, viewTitle(), rows, {
-      noSound = true, wrap = true,
-      onChoose = function(item)
-        local count = counts[item.value]
-        if not count or count <= 0 then return end
-        if opts.onChoose then opts.onChoose(item.value, count, state.view) end
-      end,
-    })
-    if opts.footer then
-      list.footer = opts.footer(state.view, #views > 1 and VIEW_LABELS[nextView(views, state.view)] or nil)
-    elseif #views > 1 then
-      list.footer = "SELECT: " .. VIEW_LABELS[nextView(views, state.view)]
-    end
-  end
-
-  backHandler = function()
-    game.stack:pop()
-    if opts.onCancel then opts.onCancel() end
-  end
-
-  chooseCurrent = function()
-    core.chooseListCurrent(list, backHandler)
-  end
-
-  function screen:update(dt)
-    local input = game.input
-    if input:wasPressed("select") then
-      cycleView()
-      return
-    elseif input:wasPressed("b") then
-      backHandler()
-      return
-    end
-    list:update(dt)
-  end
-
-  function screen:draw()
-    list:draw()
-  end
-
-  screen.screenId = Pickers.ITEM_PICKER_SCREEN_ID
-  screen.gen1ModernUi = core.gen1ModernUiListAdapter(function() return list end, {
-    title = function() return viewTitle() end,
-    select = function(payload)
-      if payload then core.setListCursor(list, payload) end
-      chooseCurrent()
+      local listOpts = {
+        messageBox = true, noSound = true, wrap = true,
+        onChoose = function(item)
+          local count = counts[item.value]
+          if not count or count <= 0 then return end
+          if opts.onChoose then opts.onChoose(item.value, count, state.view) end
+        end,
+      }
+      return rows, listOpts
     end,
-    back = function() backHandler() end,
-    start = function() cycleView() end,
+    modernUi = {
+      select = function(payload)
+        if payload then core.setListCursor(group.screen.list, payload) end
+        core.chooseListCurrent(group.screen.list, backHandler)
+      end,
+    },
   })
-
-  rebuild()
-  game.stack:push(screen)
-
-  return {
-    refresh = function() rebuild() end,
-    setFooter = function(msg) list.footer = msg end,
-    close = function() game.stack:pop() end,
-  }
+  game.stack:push(group.screen)
+  return core.pickerHandle(game, group)
 end
 
 function Pickers.openBoxPicker(mod, core, game, opts)
@@ -303,19 +207,10 @@ function Pickers.openBoxPicker(mod, core, game, opts)
 
   Boxes.ensure(game.save)
   local loadStorage = core.loadStorage
-  local viewIdx = 1
-  for i, v in ipairs(views) do
-    if v == opts.startView then viewIdx = i end
-  end
   local state = {
-    view = views[viewIdx],
     bankBox = loadStorage().currentBox,
     pcBox = math.max(1, math.min(Boxes.COUNT, game.save.currentBox or 1)),
   }
-
-  local screen = { isOpaque = true }
-  local list
-  local rebuild, cycleView, cycleBox, backHandler, chooseThisBox
 
   local function currentBoxNum() return state.view == "bank" and state.bankBox or state.pcBox end
   local function currentBox()
@@ -325,100 +220,69 @@ function Pickers.openBoxPicker(mod, core, game, opts)
 
   local function viewTitle()
     if opts.title then return opts.title(state.view, currentBoxNum()) end
-    return state.view == "bank" and Strings("BANK BOX %d", state.bankBox) or Strings("PC BOX %d", state.pcBox)
+    return state.view == "bank" and core.boxLabel(loadStorage(), state.bankBox) or core.pcBoxLabel(game, state.pcBox)
   end
 
-  cycleView = function()
-    if #views <= 1 then return end
-    state.view = nextView(views, state.view)
-    rebuild()
-  end
+  local group, cycleBox, chooseThisBox
 
   cycleBox = function(delta)
     if state.view == "bank" then
-      local n = #loadStorage().boxes
-      if n <= 1 then return end
-      state.bankBox = ((state.bankBox - 1 + delta) % n) + 1
+      state.bankBox = core.cycleBoxNumber(state.bankBox, #loadStorage().boxes, delta)
     else
-      state.pcBox = ((state.pcBox - 1 + delta) % Boxes.COUNT) + 1
+      state.pcBox = core.cycleBoxNumber(state.pcBox, Boxes.COUNT, delta)
     end
-    rebuild()
-  end
-
-  rebuild = function()
-    core.clampBoxState(state, loadStorage, Boxes.COUNT)
-    local box = currentBox()
-    local rows = {}
-    for i, mon in ipairs(box) do
-      rows[#rows + 1] = { label = core.monName(game, mon), value = i }
-    end
-    list = ListMenu.new(game, viewTitle(), rows, { noSound = true, rows = 6, wrap = true })
-    core.attachLevelIcons(list, box, 0)
-    if opts.footer then
-      list.footer = opts.footer(state.view, currentBoxNum(), #views > 1 and VIEW_LABELS[nextView(views, state.view)] or nil)
-    else
-      local hint = #views > 1 and ("SELECT: " .. VIEW_LABELS[nextView(views, state.view)] .. "\n") or ""
-      list.footer = hint .. "A: CONFIRM"
-    end
+    group.rebuild()
   end
 
   chooseThisBox = function()
     local box = currentBox()
     if opts.requireNonEmpty ~= false and #box == 0 then
-      list.footer = opts.emptyMessage or "What? There are\nno POKéMON here!"
+      group.screen.list.footer = opts.emptyMessage or "What? There are\nno POKéMON here!"
       return
     end
     if opts.onChoose then opts.onChoose(state.view, currentBoxNum()) end
   end
 
-  backHandler = function()
-    game.stack:pop()
-    if opts.onCancel then opts.onCancel() end
-  end
+  local backHandler = core.cancelHandler(game, opts)
 
-  function screen:update(dt)
-    local input = game.input
-    if input:wasPressed("select") then
-      cycleView()
-      return
-    elseif input:wasPressed("left") then
-      cycleBox(-1)
-      return
-    elseif input:wasPressed("right") then
-      cycleBox(1)
-      return
-    elseif input:wasPressed("a") then
-      chooseThisBox()
-      return
-    elseif input:wasPressed("b") then
-      backHandler()
-      return
-    end
-    list:update(dt)
-  end
-
-  function screen:draw()
-    list:draw()
-  end
-
-  screen.screenId = Pickers.BOX_PICKER_SCREEN_ID
-  screen.gen1ModernUi = core.gen1ModernUiListAdapter(function() return list end, {
-    title = function() return viewTitle() end,
-    left = function() cycleBox(-1) end,
-    right = function() cycleBox(1) end,
-    select = function() chooseThisBox() end,
-    back = function() backHandler() end,
-    start = function() cycleView() end,
+  group = core.listGroup(game, {
+    screenId = Pickers.BOX_PICKER_SCREEN_ID,
+    counter = true,
+    views = views,
+    state = state,
+    startView = opts.startView,
+    onClose = backHandler,
+    title = viewTitle,
+    label = function(view) return VIEW_LABELS[view] end,
+    -- BoxPicker's own default footer isn't just "SELECT: NEXT" so this always overrides listGroup's own default, whether or not the caller gave its own opts.footer.
+    footer = function(view, nextLabel)
+      if opts.footer then return opts.footer(view, currentBoxNum(), nextLabel) end
+      local hint = nextLabel and ("SELECT: " .. nextLabel .. "\n") or ""
+      return hint .. "A: CONFIRM"
+    end,
+    build = function()
+      core.clampBoxState(state, loadStorage, Boxes.COUNT)
+      local box = currentBox()
+      local rows = {}
+      for i, mon in ipairs(box) do
+        rows[#rows + 1] = { label = core.monName(game, mon), value = i }
+      end
+      return rows, { messageBox = true, noSound = true, wrap = true }, box
+    end,
+    extraKeys = function(input)
+      if input:wasPressed("left") then cycleBox(-1); return true end
+      if input:wasPressed("right") then cycleBox(1); return true end
+      if input:wasPressed("a") then chooseThisBox(); return true end
+      return false
+    end,
+    modernUi = {
+      left = function() cycleBox(-1) end,
+      right = function() cycleBox(1) end,
+      select = function() chooseThisBox() end,
+    },
   })
-
-  rebuild()
-  game.stack:push(screen)
-
-  return {
-    refresh = function() rebuild() end,
-    setFooter = function(msg) list.footer = msg end,
-    close = function() game.stack:pop() end,
-  }
+  game.stack:push(group.screen)
+  return core.pickerHandle(game, group)
 end
 
 return Pickers

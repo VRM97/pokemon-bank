@@ -1,12 +1,71 @@
 # Changelog
 
-New **LINK** tab: connect directly to another player, over LAN or ONLINE, and transfer Pokémon, items, moves and money straight from your Bank to theirs. Build a parcel in SEND, CONFIRM, then review what's arriving (checked against your own game's data, with anything it doesn't recognize broken out into **LOST**) and CONFIRM again. CANCEL at any point, or a broken connection, always hands back whatever you'd set aside. **A TM that arrived as a plain item stays a plain item**.
+## 2.0.0
 
-New **LINK MENU** option toggles the whole LINK tab.
+Each Bank carries its own persistent id, so **LINK also refuses to connect a Bank to itself** the same way it already refuses the same trainer. A received Pokémon is stamped with `originStorageId`, the sending Bank's own id. **SEND now has a LOST option**, for whatever the Bank has quarantined in case the other player's game actually recognizes it.
+
+**MOVE PKMN is now MANAGE PKMN** and shows the highlighted Pokémon's own species. Removed **WITHDRAW/DEPOSIT/RELEASE POKéMON**.
+
+New **TIME CAPSULE** (disabled by default, see STORAGE MODE below), a second, box-less storage that only ever moves a Pokémon **forward** across generations, never back.
+
+**LINK now sends/receives TIME CAPSULE too**. Shows regardless of **STORAGE MODE**, same as the capsule's own contents crossing generations doesn't care which storage the POKéMON tab currently opens into.
+
+**TRANSFER/CHANGE BOX** are now part of **MANAGE BOX**, listing every box directly; picking one shows **VIEW** (jumps MOVE PKMN straight to that box), **CHANGE** (the old CHANGE BOX option), **SWITCH** (swaps two boxes), **RENAME** (names a box, shown everywhere it used to just say **BOX N**, on Gen 1 renaming a PC box only shows on mod's menus), **TRANSFER** (the old TRANSFER BOX option) and **DELETE** (removes a Bank empty box). Pressing START on BANK/PC opens MANAGE BOX too.
+
+**ITEMS tab now opens MOVE ITEM directly**. MOVE ITEM now filters by pocket with Left/Right and shows the item's own description on Gen 2.
+
+**TEACH MOVE, DEPOSIT MOVE and WITHDRAW MOVE are now MANAGE MOVES**. Picking a move shows **TEACH**, **WITHDRAW**/**DEPOSIT** and **TOSS**. BAG's own rows are now labeled by the move each TM teaches instead of the TM's own item name. Left/Right filters the current page by move type. The footer shows the highlighted move's type, power, accuracy, and PP. **MANAGE MOVES now also browses PC**. **MOVES opens MANAGE MOVES directly** when there's nothing to RELEARN right now.
+
+Added basic Gen2 Clean UI compatibility, same way as Gen1 Modern UI.
+
+Bumps the STORAGE VERSION and LINK VERSION to **5**.
+
+### Options
+- New **BOX SIZE** (**20**/30/NO LIMIT). Shrinking it moves whatever no longer fits to the end of the last box, overflowing into further boxes just like a normal deposit.
+- New **DELETE EMPTY BOX** (ALL/**UNNAMED**/NEVER). Controls whether an emptied-out box is still removed automatically. **UNNAMED** leaves a *named* empty box in place instead of deleting it; **ALL** keeps the old always-delete behavior; **NEVER** stops it entirely.
+- New **LEGALITY CHECKS** (**OFF**/FIX/FORCE FIX/REJECT). Unless off, whether a Pokémon couldn't legitimately withdraw straight into the game you're currently playing is either corrected (**FIX**, after asking first; **FORCE FIX**, without asking) or refused outright (**REJECT**). See README's own section for the full list.
+- New **STORAGE MODE** (**BANK**/TIME CAPSULE/BOTH). Picks what the POKéMON tab opens (see above).
+- **LOAD REPORT is now REPORT MODE**, and its **REPORT** choice is now **FULL** -- the label and the docs had drifted apart from each other.
+
+### Game Options
+- Removed **EXPORT DATA/IMPORT DATA**.
+
+### Quality Of Life
+- Options now register with the manifest's `options_schema`, so native launcher can list and edit them before the game even starts.
+- Selecting MONEY now shows your own MONEY and the Bank's BANK balance directly.
+- A quantity of 1 no longer asks quantity across every quantity prompt.
+- START asks to withdraw or deposit everything currently visible.
+- TIME CAPSULE's own DEPOSIT/WITHDRAW now show the highlighted POKéMON's species on the footer's own first line.
+- On the game's own OPTIONS > POKéMON BANK page, picking a choice-type row with more than 2 choices now opens a popup listing all of them, starting on the current one, instead of stepping to the next one at a time.
+- That same page now shows a description of whatever's highlighted: an option row's own current value, or a button's own effect (VIEW STATS, VIEW LOST, RESTORE DATA, DELETE DATA).
+- VIEW STATS now shows a one-line description of whatever row is highlighted.
+
+### Fixes
+- Moving, releasing, tossing or swapping an entry no longer resets the cursor to the top of the list.
+- A successful TEACH left MANAGE MOVES' own row showing the move's spent use count until something else refreshed it.
+- The `*` marking the current box in MANAGE BOX never actually showed up, so it silently drew as blank. Drawn as a small square next to the name instead.
+- A Pokémon or item spelled differently between the two generations' own data tables was wrongly quarantined on load whenever the Bank was validated.
+- `reshapeForActiveGame` now backfills `happiness`/`pokerus` (to `70`/`0`).
+- TRANSFER BOX (Bank to Bank) spilled into other boxes -- creating new ones if needed -- whenever the chosen destination was already full, instead of leaving the rest behind in the source box. Since the emptied source box then got auto-deleted and every later box renumbered down, the overflow box could end up relabeled with the source's own old number, making it look like nothing had moved. It now only fills the chosen box and reports how many stayed behind, matching PC's own TRANSFER.
+
+### API
+- New exports `canLearn`, `speciesKnowsMove`, `prevolutionOf`, `isLegal`, `setBoxSizeOverride`/`getBoxSizeOverride`, `tossMove`, `getStorageId`, `translateSpeciesId`/`translateItemId`/`translateMoveId`, `registerDex`, `openTimeCapsuleMenu`, `timeCapsuleScreenId`, `timeCapsuleWithdrawScreenId`, `isTimeCapsuleEnabled`, `timeCapsulePokemonCount`, `listTimeCapsulePokemon`, `tryFixLegality` and `needsLegalityFix`.
+- `withdrawPokemon`/`withdrawToParty`/`withdrawToBox` gain an optional `fix` parameter -- the fix behind **LEGALITY CHECKS**' own **FIX** choice, and the calls that opt a withdraw into applying it.
+- New event `mod.vrm_pokemon_bank.move_tossed`.
+
+## 1.11.1
+
+Fixed gen 2 stat calculation
+
+## 1.11.0
+
+New **LINK** tab: connect directly to another player, over LAN or ONLINE, and transfer Pokémon, items, moves and money straight from your Bank to theirs. Build a parcel in SEND, CONFIRM, then review what's arriving (checked against your own game's data, with anything it doesn't recognize broken out into LOST) and CONFIRM again. CANCEL at any point, or a broken connection, always hands back whatever you'd set aside. A TM that arrived as a plain item stays a plain item.
+
+New **LINK** MENU option toggles the whole LINK tab.
 
 New **RESTORE DATA** row on the game's own OPTIONS > POKéMON BANK page, above DELETE DATA: rolls the Bank back to that backup after confirming.
 
-New exports: `openLinkMenu`, `linkScreenId`, `isLinkTabEnabled`/`setLinkTabEnabled`,  `getTmItemDepositOverride()`.
+New exports: `openLinkMenu`, `linkScreenId`, `isLinkTabEnabled`/`setLinkTabEnabled`, `getTmItemDepositOverride`.
 
 Requires the new `network` permission to open the connection.
 

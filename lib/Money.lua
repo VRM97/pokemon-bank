@@ -8,27 +8,25 @@ local Theme = require("src.ui.Theme")
 
 local SCREEN_ID = "PokemonBankMoney"
 local AMOUNT_SCREEN_ID = "PokemonBankMoneyAmount"
-
--- Withdrawals are capped so save.money can never cross it, matching what happens to any amount over it anyway the next time GenSave writes the save (setBcd clamps with math.min(save.money, MAX_MONEY), silently dropping the excess). See API.md's maxMoney entry for why the Bank's own balance isn't capped by this itself.
 local MAX_MONEY = 999999
 
 local Module = {}
 
 function Module.install(mod, core)
   local loadStorage = core.loadStorage
-  local markDirty = core.markDirty
   local message = core.message
-  local playSound = core.playSound
+
+  local Money = {
+    screenId = SCREEN_ID,
+    amountScreenId = AMOUNT_SCREEN_ID
+  }
 
   local function bankMoney()
     return loadStorage().money or 0
   end
 
-  -- Gen1 keeps the wallet on save.money; Gen2 moves it to save.player.money instead.
   local function walletMoney(game)
-    if GameVersion.generation() == 2 then
-      return (game.save.player and game.save.player.money) or 0
-    end
+    if GameVersion.generation() == 2 then return (game.save.player and game.save.player.money) or 0 end
     return game.save.money or 0
   end
 
@@ -36,9 +34,7 @@ function Module.install(mod, core)
     if GameVersion.generation() == 2 then
       game.save.player = game.save.player or {}
       game.save.player.money = amount
-    else
-      game.save.money = amount
-    end
+    else game.save.money = amount end
   end
 
   local function depositMoney(amount)
@@ -46,7 +42,7 @@ function Module.install(mod, core)
     if amount <= 0 then return false, "bad request" end
     local s = loadStorage()
     s.money = (s.money or 0) + amount
-    markDirty()
+    core.markDirty()
     return true
   end
 
@@ -56,13 +52,10 @@ function Module.install(mod, core)
     local have = s.money or 0
     if amount <= 0 or amount > have then return false, "not enough" end
     s.money = have - amount
-    markDirty()
+    core.markDirty()
     return true
   end
 
-  -- QuantityBox is built for item stacks, its box fixed at 2 digits -- too narrow for a money amount, which can run into six digits.
-  -- Sized to the amount's own digit count instead, right edge pinned at column 20 like QuantityBox's own two variants (15+5 unpriced, 7+13 priced) so it lines up with them.
-  -- The wallet/bank balance shown above the amount (opts.wallet/opts.bank) is a static snapshot from when the box opened, not a live read, since neither actually changes until A confirms.
   local AmountBox = {}
   AmountBox.__index = AmountBox
   AmountBox.isOpaque = false
@@ -76,12 +69,11 @@ function Module.install(mod, core)
     self.bank = math.floor(opts.bank or 0)
     self.walletLabel = opts.walletLabel or "MONEY"
     self.bankLabel = opts.bankLabel or "BANK"
-    self.onDone = opts.onDone -- onDone(amount | nil on cancel)
+    self.onDone = opts.onDone
     self.title = opts.title
     self:setAmount(opts.start or 1)
     self.pos = self.digitCount
 
-    -- Gen1 Modern UI compatibility surface.
     self.screenId = AMOUNT_SCREEN_ID
     self.gen1ModernUi = {
       title = function() return self.title or "AMOUNT" end,
@@ -123,7 +115,6 @@ function Module.install(mod, core)
     self.digits = digits
   end
 
-  -- Each step is its own method, shared by :update's own D-pad handling below and the gen1ModernUi actions above, so a touch/mouse control does exactly what the matching button does.
   function AmountBox:stepDigit(delta)
     self.digits[self.pos] = (self.digits[self.pos] + delta) % 10
     self:setAmount(composeDigits(self.digits, self.digitCount))
@@ -164,33 +155,39 @@ function Module.install(mod, core)
     end
   end
 
+  function Money.walletBankBoxWidth(moneyLabel, moneyVal, bankLabel, bankVal, extra)
+    local gap = 1
+    local interior = math.max(#moneyLabel + gap + #moneyVal, #bankLabel + gap + #bankVal, extra or 0)
+    local tw = interior + 2
+    return tw, math.max(0, 20 - tw)
+  end
+
+  function Money.drawWalletBankRows(tx, ty, moneyLabel, moneyVal, bankLabel, bankVal)
+    Font.draw(moneyLabel, (tx + 1) * 8, (ty + 1) * 8)
+    Font.draw(bankLabel, (tx + 1) * 8, (ty + 2) * 8)
+    Font.draw(moneyVal, 160 - 8 - Font.width(moneyVal), (ty + 1) * 8)
+    Font.draw(bankVal, 160 - 8 - Font.width(bankVal), (ty + 2) * 8)
+  end
+
   function AmountBox:draw()
     local moneyVal = ("¥%d"):format(self.wallet)
     local bankVal = ("¥%d"):format(self.bank)
     local digitsStr = table.concat(self.digits)
     local amountVal = "¥" .. digitsStr
     local moneyLabel, bankLabel = self.walletLabel, self.bankLabel
-    local gap = 1 -- min blank column between a left label and its right-aligned value
-    local interior = math.max(
-      #moneyLabel + gap + #moneyVal,
-      #bankLabel + gap + #bankVal,
-      #amountVal
-    )
-    local tw = interior + 2
-    local tx = math.max(0, 20 - tw)
+    local tw, tx = Money.walletBankBoxWidth(moneyLabel, moneyVal, bankLabel, bankVal, #amountVal)
     local ty = 9
     Font.drawBox(tx, ty, tw, 6)
     love.graphics.setColor(0, 0, 0, 1)
-    Font.draw(moneyLabel, (tx + 1) * 8, (ty + 1) * 8)
-    Font.draw(bankLabel, (tx + 1) * 8, (ty + 2) * 8)
-    Font.draw(moneyVal, 160 - 8 - Font.width(moneyVal), (ty + 1) * 8)
-    Font.draw(bankVal, 160 - 8 - Font.width(bankVal), (ty + 2) * 8)
+    Money.drawWalletBankRows(tx, ty, moneyLabel, moneyVal, bankLabel, bankVal)
     local amountX = 160 - 8 - Font.width(amountVal)
     Font.draw(amountVal, amountX, (ty + 3) * 8)
     local cursorX = amountX + Font.width("¥" .. digitsStr:sub(1, self.pos - 1))
     Font.drawCode(Theme.moreArrow, cursorX, (ty + 4) * 8)
     love.graphics.setColor(1, 1, 1, 1)
   end
+
+  Money.AmountBox = AmountBox
 
   -- =========================================================================
   -- Money UI
@@ -211,7 +208,7 @@ function Module.install(mod, core)
         setWalletMoney(game, have - amount)
         depositMoney(amount)
         mod.events:emit("mod.vrm_pokemon_bank.money_deposited", { amount = amount })
-        playSound(game, "Withdraw_Deposit")
+        core.playSound(game, "Withdraw_Deposit")
         message(game, Strings("¥%d was\nstored in BANK.", amount))
       end,
     }))
@@ -239,62 +236,59 @@ function Module.install(mod, core)
         withdrawMoney(amount)
         setWalletMoney(game, walletMoney(game) + amount)
         mod.events:emit("mod.vrm_pokemon_bank.money_withdrawn", { amount = amount })
-        playSound(game, "Withdraw_Deposit")
+        core.playSound(game, "Withdraw_Deposit")
         message(game, Strings("Withdrew\n¥%d.", amount))
       end,
     }))
   end
 
-  -- No vanilla equivalent to mirror instead: DEPOSIT MONEY / WITHDRAW MONEY / CANCEL, each opening AmountBox above for the amount.
+  local function drawWalletBankBox(game)
+    local moneyVal = ("¥%d"):format(walletMoney(game))
+    local bankVal = ("¥%d"):format(bankMoney())
+    local moneyLabel, bankLabel = "MONEY", "BANK"
+    local tw, tx = Money.walletBankBoxWidth(moneyLabel, moneyVal, bankLabel, bankVal)
+    local ty = 9
+    Font.drawBox(tx, ty, tw, 4)
+    love.graphics.setColor(0, 0, 0, 1)
+    Money.drawWalletBankRows(tx, ty, moneyLabel, moneyVal, bankLabel, bankVal)
+    love.graphics.setColor(1, 1, 1, 1)
+  end
+
   local function BankMoneyMenu(game)
     local rows = {
       { label = "DEPOSIT MONEY", keepOpen = true, onSelect = function() openDepositMoney(game) end },
       { label = "WITHDRAW MONEY", keepOpen = true, onSelect = function() openWithdrawMoney(game) end },
       { label = "CANCEL" },
     }
-    return Menu.new(game, rows, { tx = 0, ty = 0, tw = 16, th = #rows * 2 + 2, noSound = true })
+    local menu = Menu.new(game, rows, { tx = 0, ty = 0, tw = 16, th = #rows * 2 + 2, noSound = true })
+    local screen = { isOpaque = false }
+    function screen:update(dt) menu:update(dt) end
+    function screen:draw()
+      menu:draw()
+      drawWalletBankBox(game)
+    end
+    return screen
   end
 
   mod.content.screens:register(SCREEN_ID, { new = BankMoneyMenu })
 
   local moneyTab = core.makeTabToggle("show_money_tab")
-  local tabEnabled = moneyTab.enabled
+  Money.tabEnabled = moneyTab.enabled
 
   -- =========================================================================
   -- Public API for other mods. See API.md for the full reference.
   -- =========================================================================
+  local function amountPayload(amount) return { amount = amount } end
+
   mod.exports.bankMoney = bankMoney
-
-  mod.exports.depositMoney = function(amount)
-    local ok, err = depositMoney(amount)
-    if ok then
-      mod.events:emit("mod.vrm_pokemon_bank.money_deposited", { amount = amount })
-    end
-    return ok, err
-  end
-
-  mod.exports.withdrawMoney = function(amount)
-    local ok, err = withdrawMoney(amount)
-    if ok then
-      mod.events:emit("mod.vrm_pokemon_bank.money_withdrawn", { amount = amount })
-    end
-    return ok, err
-  end
-
+  mod.exports.depositMoney = core.emitOnSuccess(depositMoney, "mod.vrm_pokemon_bank.money_deposited", amountPayload)
+  mod.exports.withdrawMoney = core.emitOnSuccess(withdrawMoney, "mod.vrm_pokemon_bank.money_withdrawn", amountPayload)
   mod.exports.maxMoney = MAX_MONEY
   mod.exports.moneyScreenId = SCREEN_ID
-
   mod.exports.setMoneyTabEnabled = moneyTab.setEnabled
-  mod.exports.isMoneyTabEnabled = tabEnabled
-
+  mod.exports.isMoneyTabEnabled = Money.tabEnabled
   mod.log:info("Pokemon Bank: Money tab ready")
-
-  return {
-    screenId = SCREEN_ID,
-    amountScreenId = AMOUNT_SCREEN_ID,
-    tabEnabled = tabEnabled,
-    AmountBox = AmountBox,
-  }
+  return Money
 end
 
 return Module

@@ -1,7 +1,7 @@
 {
   "id": "vrm_pokemon_bank",
   "name": "Pokémon Bank",
-  "version": "1.11.1",
+  "version": "2.0.0",
   "api": 2,
   "entry": "main.lua",
   "profile": "content",
@@ -9,6 +9,7 @@
   "game_version": ">=0.1.86-0 <2.0.0",
   "priority": 100,
   "affects_link": false,
+  "options_schema": "options.lua",
   "games": ["gen1", "gen2"],
   "permissions": [
     "engine_internals",
@@ -18,7 +19,8 @@
   "optional_dependencies": [
     "CRYSTAL_251",
     "reusable_machines",
-    "gen1_modern_ui"
+    "gen1_modern_ui",
+    "gen2_clean_ui"
   ],
   "conflicts": [],
   "github": "VRM97/pokemon-bank",

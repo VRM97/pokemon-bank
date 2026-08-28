@@ -1,63 +1,43 @@
 local V = ...
 
+local SCREEN_ID = "PokemonBankItems"
+
 local Bag = require("src.inventory.Bag")
 local Strings = require("src.core.Strings")
-local Menu = require("src.ui.Menu")
-local ListMenu = require("src.ui.ListMenu")
 local ChoiceBox = require("src.ui.ChoiceBox")
-local Font = require("src.render.Font")
-
-local SCREEN_ID = "PokemonBankItems"
-local MOVE_ITEMS_SCREEN_ID = "PokemonBankMoveItems"
 
 local Module = {}
 
 function Module.install(mod, core)
+  local GenerationMap = V.require("GenerationMap")
   local loadStorage = core.loadStorage
-  local markDirty = core.markDirty
-  local playSound = core.playSound
   local itemName = core.itemName
-  local sortedItemIds = core.sortedItemIds
-  local askItemQuantity = core.askQuantity
-  local isMovesTabEnabled = core.isMovesTabEnabled
 
-  -- HMs and key items can never enter the Bank -- a hard rule, not a preference. See API.md's blacklistItem entry for extraBlacklist's own rules.
-  local extraBlacklist = {}
+  local Items = { screenId = SCREEN_ID }
 
-  local function isHM(id)
-    return type(id) == "string" and id:find("^HM_") ~= nil
-  end
+  local function startsWith(text, prefix) return type(text) == "string" and text:find("^" .. prefix) ~= nil end
 
-  -- A TM has a real place to go (banked as the move it teaches, lib/Moves.lua) rather than sitting here as a plain item -- refused at deposit time only, not blacklisted: a TM already in the Bank as an item from before this rule stays exactly where it is and is never quarantined for it. With the MOVES tab off (the player's own option or another mod's setMovesTabEnabled(false)), that place doesn't exist right now, so a TM falls back to depositing as a plain item instead of being refused outright -- whatever's already banked as a move stays exactly where it is either way.
-  local function isTM(id)
-    return type(id) == "string" and id:find("^TM_") ~= nil
-  end
+  local function isHM(id) return startsWith(id, "HM_") end
 
-  -- Lets another mod force the rule above one way or the other, independent of (and taking priority over) the MOVES tab's own state: true always allows a TM to deposit as a plain item, false always refuses it, nil (the default) leaves the MOVES tab in charge. See setTmItemDepositAllowed/isTmItemDepositAllowed in API.md.
+  local function isTM(id) return startsWith(id, "TM_") end
+
   local tmItemDepositOverride = nil
 
   local function blockTmDeposit(id)
     if not isTM(id) then return false end
     if tmItemDepositOverride ~= nil then return not tmItemDepositOverride end
-    return not isMovesTabEnabled or isMovesTabEnabled()
+    return not core.isMovesTabEnabled or core.isMovesTabEnabled()
   end
 
   local function isKeyItem(def)
     return def ~= nil and (def.keyItem == true or def.pocket == "KEY_ITEM")
   end
 
-  local function isBlacklisted(id, def)
-    if extraBlacklist[id] then return true end
-    if isHM(id) then return true end
-    if isKeyItem(def) then return true end
-    return false
-  end
+  local extraBlacklist = {}
 
-  -- ---------------------------------------------------------------------
-  -- Item storage: a flat { id = count } table, no manual ordering to maintain -- the UI below always lists it sorted by display name.
-  -- ---------------------------------------------------------------------
-  local function itemCount(id)
-    return loadStorage().items[id] or 0
+  local function isBlacklisted(id, def)
+    if extraBlacklist[id] or isHM(id) or isKeyItem(def) then return true end
+    return false
   end
 
   local function depositItem(id, qty, def)
@@ -65,20 +45,15 @@ function Module.install(mod, core)
     if type(id) ~= "string" or id == "" or qty <= 0 then return false, "bad request" end
     if blockTmDeposit(id) then return false, "is_tm" end
     if isBlacklisted(id, def) then return false, "blacklisted" end
-    local s = loadStorage()
-    s.items[id] = (s.items[id] or 0) + qty
-    markDirty()
+    core.bucketAdd(loadStorage().items, id, qty)
+    core.markDirty()
     return true
   end
 
   local function withdrawItem(id, qty)
     qty = math.floor(tonumber(qty) or 0)
-    local s = loadStorage()
-    local have = s.items[id] or 0
-    if qty <= 0 or qty > have then return false, "not enough" end
-    s.items[id] = have - qty
-    if s.items[id] <= 0 then s.items[id] = nil end
-    markDirty()
+    if not core.bucketSub(loadStorage().items, id, qty) then return false, "not enough" end
+    core.markDirty()
     return true
   end
 
@@ -89,114 +64,118 @@ function Module.install(mod, core)
   end
 
   local function isValidItem(id, data)
-    return type(id) == "string" and id ~= ""
-      and type(data) == "table"
-      and type(data.items) == "table"
-      and data.items[id] ~= nil
+    return type(id) == "string" and id ~= "" and type(data) == "table" and type(data.items) == "table" and data.items[id] ~= nil
   end
 
-  local function validateStorage(game)
-    local data = game and game.data
-    if not data then
-      return { changed = false, quarantined = 0, restored = 0, lostItems = {}, restoredItems = {} }
+  local function normalizeItemKeys(bucket, data)
+    local renames
+    for id, qty in pairs(bucket) do
+      if qty and qty > 0 and not data.items[id] then
+        local translated = GenerationMap.translateItemId(id)
+        if translated ~= id and data.items[translated] then
+          renames = renames or {}
+          renames[#renames + 1] = { from = id, to = translated }
+        end
+      end
     end
+    if not renames then return end
+    for _, r in ipairs(renames) do
+      bucket[r.to] = (bucket[r.to] or 0) + (bucket[r.from] or 0)
+      bucket[r.from] = nil
+    end
+  end
+
+  function Items.validateStorage(game)
+    local data = game and game.data
+    if not data then return { changed = false, quarantined = 0, restored = 0, lostItems = {}, restoredItems = {} } end
     local s = loadStorage()
     local orphaned = core.ensureOrphaned(s)
-    local quarantined, restored = 0, 0
-    local lostItems, restoredItems = {}, {}
-    local badIds = {}
-    for id, count in pairs(s.items) do
-      if not isValidItem(id, data) or isBlacklisted(id, data.items[id]) then badIds[#badIds + 1] = id end
+    if type(data.items) == "table" then
+      normalizeItemKeys(s.items, data)
+      normalizeItemKeys(orphaned.items, data)
     end
-    for _, id in ipairs(badIds) do
-      local qty = s.items[id] or 0
-      if qty > 0 then
-        s.items[id] = nil
-        orphaned.items[id] = (orphaned.items[id] or 0) + qty
-        quarantined = quarantined + qty
-        lostItems[#lostItems + 1] = { id = id, count = qty, from = "POKéMON BANK" }
-      end
-    end
-    local goodIds = {}
-    for id, count in pairs(orphaned.items) do
-      if isValidItem(id, data) and not isBlacklisted(id, data.items[id]) then goodIds[#goodIds + 1] = id end
-    end
-    for _, id in ipairs(goodIds) do
-      local qty = orphaned.items[id] or 0
-      if qty > 0 then
-        orphaned.items[id] = nil
-        s.items[id] = (s.items[id] or 0) + qty
-        restored = restored + qty
-        restoredItems[#restoredItems + 1] = { id = id, count = qty }
-      end
-    end
-    return {
-      changed = quarantined > 0 or restored > 0,
-      quarantined = quarantined,
-      restored = restored,
-      lostItems = lostItems,
-      restoredItems = restoredItems,
-    }
+    local function isValid(id) return isValidItem(id, data) and not isBlacklisted(id, data.items[id]) end
+    local result = core.reconcileCountBucket(s.items, orphaned.items, isValid, "POKéMON BANK")
+    result.changed = result.quarantined > 0 or result.restored > 0
+    return result
   end
 
-  local function listInvalidItems()
-    local out = {}
-    local s = loadStorage()
-    local orphaned = s.orphaned and s.orphaned.items or {}
-    for id, count in pairs(orphaned) do out[id] = count end
-    return out
-  end
+  local function listInvalidItems() return core.listOrphaned("items") end
 
-  local function invalidItemCount(id)
-    local s = loadStorage()
-    local orphaned = s.orphaned and s.orphaned.items or {}
-    if id ~= nil then return orphaned[id] or 0 end
-    local n = 0
-    for _, count in pairs(orphaned) do n = n + count end
-    return n
-  end
+  local function invalidItemCount(id) return core.orphanedCount("items", id) end
 
   -- =========================================================================
   -- Item UI
   -- =========================================================================
+  local ITEM_POCKETS = {
+    { id = "ITEM", label = "Items" },
+    { id = "BALL", label = "Balls" },
+    { id = "KEY_ITEM", label = "Key Items" },
+    { id = "TM_HM", label = "TM/HM" },
+  }
+
+  function Items.pocketOf(game, id)
+    local def = game.data.items[id]
+    return def and def.pocket
+  end
+
+  function Items.availablePockets(game, counts)
+    local present = {}
+    for id, count in pairs(counts) do
+      if count and count > 0 then
+        local p = Items.pocketOf(game, id)
+        if p then present[p] = true end
+      end
+    end
+    local list = { "ALL" }
+    for _, entry in ipairs(ITEM_POCKETS) do
+      if present[entry.id] then list[#list + 1] = entry.id end
+    end
+    return list
+  end
+
+  function Items.pocketLabel(pocket)
+    if pocket == "ALL" then return "ALL" end
+    for _, entry in ipairs(ITEM_POCKETS) do
+      if entry.id == pocket then return entry.label end
+    end
+    return pocket
+  end
+
+  function Items.itemDescriptionText(game, id)
+    local def = game.data.items[id]
+    local description = def and def.description
+    if not description then return nil end
+    local first, second = description:match("^(.-)<NEXT>(.*)$")
+    if not first then first, second = description:match("^(.-)\n(.*)$") end
+    if not first then return description end
+    if second and second ~= "" then return first .. "\n" .. second end
+    return first
+  end
+
+  local function itemRow(game, id, count)
+    return { value = id, label = core.truncateName(itemName(game, id)), right = "x" .. tostring(count) }
+  end
+
   local function itemRows(game, items)
     local rows = {}
-    for _, id in ipairs(sortedItemIds(game, items)) do
-      rows[#rows + 1] = { value = id, label = core.truncateName(itemName(game, id)), right = "x" .. tostring(items[id]) }
+    for _, id in ipairs(core.sortedItemIds(game, items)) do
+      rows[#rows + 1] = itemRow(game, id, items[id])
     end
     return rows
   end
 
-  local function bankItemRows(game)
-    local s = loadStorage()
-    return itemRows(game, s.items)
-  end
-
-  local function bagItemRowsForBank(game)
-    local inv = game.save.inventory
-    local counts = {}
-    for _, id in ipairs(Bag.order(game.save)) do counts[id] = inv[id] end
-    return itemRows(game, counts)
-  end
-
-  -- MOVE ITEM's own bag view, for its SWITCH option only: shows real Bag menu order.
   local function bagItemRowsOrdered(game)
     local inv = game.save.inventory
     local rows = {}
     for _, id in ipairs(Bag.order(game.save)) do
       if inv[id] and inv[id] > 0 then
-        rows[#rows + 1] = { value = id, label = core.truncateName(itemName(game, id)), right = "x" .. tostring(inv[id]) }
+        rows[#rows + 1] = itemRow(game, id, inv[id])
       end
     end
     return rows
   end
 
-  local function pcItemsRowsForBank(game)
-    game.save.pcItems = game.save.pcItems or {}
-    return itemRows(game, game.save.pcItems)
-  end
-
-  -- wNumBoxItems capacity (players_pc.asm): 50 distinct stacks, mirroring PlayerPC.lua's own pcFull -- growing an existing stack is always fine.
   local function pcItemFull(game, id)
     local pc = game.save.pcItems
     if pc[id] then return false end
@@ -206,124 +185,51 @@ function Module.install(mod, core)
     return stacks >= cap
   end
 
-  -- Updates or drops `id`'s row after its count changed, keeping the list open and the cursor valid (vanilla PlayerPC's own refreshRow).
-  local function refreshItemRow(list, count, id)
-    for i, row in ipairs(list.items) do
-      if row.value == id then
-        if count and count > 0 then
-          row.right = "x" .. tostring(count)
-        else
-          table.remove(list.items, i)
-        end
-        break
-      end
-    end
-    list.index = math.max(1, math.min(list.index, #list.items))
+  local function pageLabel(view)
+    if view == "bank" then return "BANK" end
+    if view == "pc" then return "PC" end
+    return "BAG"
   end
 
-  -- WITHDRAW ITEM's own per-item flow, factored out so MOVE ITEM's bank-side view can reuse it verbatim instead of duplicating it.
-  local function withdrawItemChoice(game, list, item)
-    local count = itemCount(item.value)
-    if count <= 0 then
-      list.footer = "The selection changed."
-      return
-    end
-    askItemQuantity(game, list, count, function(qty)
-      if not Bag.add(game.save, item.value, qty, game.data) then
-        list.footer = "You can't carry\nany more items."
-        return
-      end
-      withdrawItem(item.value, qty)
-      mod.events:emit("mod.vrm_pokemon_bank.item_withdrawn", { id = item.value, qty = qty })
-      refreshItemRow(list, itemCount(item.value), item.value)
-      playSound(game, "Withdraw_Deposit")
-      list.footer = Strings("Withdrew\n%s.", itemName(game, item.value))
-    end)
-  end
-
-  -- DEPOSIT ITEM's own per-item flow, factored out so MOVE ITEM's bag-side view can reuse it verbatim instead of duplicating it.
-  local function depositItemChoice(game, list, item)
-    local def = game.data.items[item.value]
-    if blockTmDeposit(item.value) then
-      list.footer = "TMs go through\nthe MOVES tab!"
-      return
-    end
-    if isBlacklisted(item.value, def) then
-      list.footer = "That can't be\nstored in BANK!"
-      return
-    end
-    local count = game.save.inventory[item.value]
-    if not count then
-      list.footer = "The selection changed."
-      return
-    end
-    askItemQuantity(game, list, count, function(qty)
-      Bag.remove(game.save, item.value, qty)
-      depositItem(item.value, qty, def)
-      mod.events:emit("mod.vrm_pokemon_bank.item_deposited", { id = item.value, qty = qty })
-      refreshItemRow(list, game.save.inventory[item.value], item.value)
-      playSound(game, "Withdraw_Deposit")
-      list.footer = Strings("%s was\nstored in BANK.", itemName(game, item.value))
-    end)
-  end
-
-  local function openWithdrawItemsList(game)
-    local list
-    list = ListMenu.new(game, "WITHDRAW ITEM", bankItemRows(game), {
-      messageBox = true, noSound = true, wrap = true,
-      onChoose = function(item) withdrawItemChoice(game, list, item) end,
-    })
-    game.stack:push(list)
-  end
-
-  local function openDepositItemsList(game)
-    local list
-    list = ListMenu.new(game, "DEPOSIT ITEM", bagItemRowsForBank(game), {
-      messageBox = true, noSound = true, wrap = true,
-      onChoose = function(item) depositItemChoice(game, list, item) end,
-    })
-    game.stack:push(list)
-  end
-
-  -- MOVE ITEM: SELECT cycles BANK > BAG > PC. A opens TO <the other two>, SWITCH (BAG only -- reorders Bag.order; BANK and PC both always list alphabetically), TOSS and CANCEL.
-  local function openMoveItemsList(game)
+  local function BankItemMenu(game)
     game.save.pcItems = game.save.pcItems or {}
-    local state = { view = "bank", pendingSwap = nil }
-    local screen = { isOpaque = true }
-    local list
-    local rebuild, openItemActions, completeSwitch, backHandler, chooseCurrent
+    local state = {
+      view = "bank",
+      pocket = "ALL",
+      pendingSwap = nil
+    }
+    local group
 
-    local function currentStore()
-      if state.view == "bank" then return loadStorage().items
-      elseif state.view == "bag" then return game.save.inventory
+    local function storeFor(view)
+      if view == "bank" then return loadStorage().items
+      elseif view == "bag" then return game.save.inventory
       else return game.save.pcItems end
     end
 
-    local function currentRows()
-      if state.view == "bank" then return bankItemRows(game)
-      elseif state.view == "bag" then return bagItemRowsOrdered(game)
-      else return pcItemsRowsForBank(game) end
+    local function currentStore() return storeFor(state.view) end
+
+    local function rawRows(view)
+      if view == "bag" then return bagItemRowsOrdered(game) end
+      return itemRows(game, storeFor(view))
     end
 
-    local function viewTitle()
-      if state.view == "bank" then return "BANK"
-      elseif state.view == "bag" then return "BAG"
-      else return "PC" end
+    local function filteredItemRows(view)
+      local rows = rawRows(view)
+      if state.pocket == "ALL" then return rows end
+      local filtered = {}
+      for _, row in ipairs(rows) do
+        if Items.pocketOf(game, row.value) == state.pocket then filtered[#filtered + 1] = row end
+      end
+      return filtered
     end
 
-    -- BANK > BAG > PC > BANK, matching cycleView below -- what SELECT switches TO from the current view, for the footer hint.
-    local function nextViewName()
-      if state.view == "bank" then return "BAG"
-      elseif state.view == "bag" then return "PC"
-      else return "BANK" end
-    end
-
-    local function cycleView()
+    local function cyclePocket(delta)
       if state.pendingSwap then return end
-      if state.view == "bank" then state.view = "bag"
-      elseif state.view == "bag" then state.view = "pc"
-      else state.view = "bank" end
-      rebuild()
+      local avail = Items.availablePockets(game, currentStore())
+      local nextPocket = core.cycleCategory(state.pocket, avail, delta)
+      if nextPocket == state.pocket then return end
+      state.pocket = nextPocket
+      group.rebuild()
     end
 
     local function successMsg(destView, id)
@@ -333,115 +239,129 @@ function Module.install(mod, core)
       else return Strings("Withdrew\n%s.", name) end
     end
 
-    -- Why depositing id into the Bank right now would be refused -- checked up front in startMove, before the quantity prompt even opens (so TO BANK never asks "how many?" only to reject the answer), and again here in moveItem as the actual gate.
     local function bankDepositBlockReason(id)
       if blockTmDeposit(id) then return "TMs go through\nthe MOVES tab!" end
       if isBlacklisted(id, game.data.items[id]) then return "That can't be\nstored in BANK!" end
       return nil
     end
 
-    -- destination capacity/blacklist check, then move qty of id out of the current view and into destView.
-    -- Only destView == "bank" or srcView == "bank" ever touches the Bank's own storage/events -- a BAG <-> PC move is entirely between two vanilla save structures.
     local function moveItem(destView, id, qty)
       local srcView = state.view
       local pc = game.save.pcItems
-
       if destView == "bag" then
-        if not Bag.add(game.save, id, qty, game.data) then
-          return false, "You can't carry\nany more items."
-        end
+        if not Bag.add(game.save, id, qty, game.data) then return false, "You can't carry\nany more items." end
       elseif destView == "bank" then
         local reason = bankDepositBlockReason(id)
         if reason then return false, reason end
       elseif destView == "pc" then
-        if pcItemFull(game, id) then
-          return false, "No room left to\nstore items."
-        end
+        if pcItemFull(game, id) then return false, "No room left to\nstore items." end
       end
-
       if srcView == "bag" then
         Bag.remove(game.save, id, qty)
       elseif srcView == "bank" then
         withdrawItem(id, qty)
       elseif srcView == "pc" then
-        pc[id] = pc[id] - qty
-        if pc[id] <= 0 then pc[id] = nil end
+        core.bucketSub(pc, id, qty)
       end
-
       if destView == "bank" then
         depositItem(id, qty, game.data.items[id])
       elseif destView == "pc" then
-        pc[id] = (pc[id] or 0) + qty
+        core.bucketAdd(pc, id, qty)
       end
-
-      if destView == "bank" then
-        mod.events:emit("mod.vrm_pokemon_bank.item_deposited", { id = id, qty = qty })
-      elseif srcView == "bank" then
-        mod.events:emit("mod.vrm_pokemon_bank.item_withdrawn", { id = id, qty = qty })
-      end
-      playSound(game, "Withdraw_Deposit")
+      if destView == "bank" then mod.events:emit("mod.vrm_pokemon_bank.item_deposited", { id = id, qty = qty }) end
+      if srcView == "bank" then mod.events:emit("mod.vrm_pokemon_bank.item_withdrawn", { id = id, qty = qty }) end
+      core.playSound(game, "Withdraw_Deposit")
       return true, successMsg(destView, id)
     end
 
     local function startMove(destView, id)
       local count = currentStore()[id]
       if not count then
-        list.footer = "The selection changed."
+        group.screen.list.footer = "The selection changed."
         return
       end
       if destView == "bank" then
         local reason = bankDepositBlockReason(id)
         if reason then
-          list.footer = reason
+          group.screen.list.footer = reason
           return
         end
       end
-      askItemQuantity(game, list, count, function(qty)
+      core.askQuantity(game, group.screen.list, count, function(qty)
         local _, msg = moveItem(destView, id, qty)
-        rebuild()
-        list.footer = msg
+        group.rebuild(true)
+        group.screen.list.footer = msg
       end)
     end
 
-    -- Tosses out of whichever storage is currently shown. The Bank can never hold an HM/key item (depositItem refuses them), but the Bag and the PC both can.
-    -- Bag and PC get the same tossability guard their own vanilla TOSS uses before the quantity prompt even opens.
+    local function startMoveAll()
+      if state.pendingSwap then return end
+      local rows = filteredItemRows(state.view)
+      local destView = state.view == "bank" and "bag" or "bank"
+      core.confirmBulkMoveAll(game, {
+        count = #rows,
+        verb = destView == "bag" and "Withdraw" or "Deposit",
+        resultVerb = destView == "bag" and "Withdrew" or "Deposited",
+        noun = "items",
+        -- moveItem already plays Withdraw_Deposit per successful row
+        playSound = false,
+        run = function()
+          local moved, refused = 0, 0
+          for _, row in ipairs(rows) do
+            local count = currentStore()[row.value]
+            if count and count > 0 then
+              local ok = moveItem(destView, row.value, count)
+              if ok then moved = moved + 1 else refused = refused + 1 end
+            end
+          end
+          return moved, refused
+        end,
+        rebuild = function() group.rebuild(true) end,
+        setFooter = function(msg) group.screen.list.footer = msg end,
+      })
+    end
+
     local function startToss(id)
       local count = currentStore()[id]
       if not count then
-        list.footer = "The selection changed."
+        group.screen.list.footer = "The selection changed."
         return
       end
       if state.view ~= "bank" then
         local def = game.data.items[id]
         if isKeyItem(def) or isHM(id) then
-          list.footer = "That's too impor-\ntant to toss!"
+          group.screen.list.footer = "That's too impor-\ntant to toss!"
           return
         end
       end
-      askItemQuantity(game, list, count, function(qty)
-        list.footer = Strings("Toss %s?", itemName(game, id))
-        game.stack:push(ChoiceBox.new(game, function(yes)
-          if not yes then
-            list.footer = nil
-            return
-          end
+      core.confirmTossQuantity(game, group.screen.list, {
+        count = count,
+        name = itemName(game, id),
+        choice = function(prompt, onYes)
+          group.screen.list.footer = prompt
+          game.stack:push(ChoiceBox.new(game, function(yes)
+            if not yes then
+              group.screen.list.footer = nil
+              return
+            end
+            onYes()
+          end, { noSound = true }))
+        end,
+        onToss = function(qty)
           if state.view == "bank" then
             withdrawItem(id, qty)
             mod.events:emit("mod.vrm_pokemon_bank.item_tossed", { id = id, qty = qty })
           elseif state.view == "bag" then
             Bag.remove(game.save, id, qty)
-          else -- pc
-            local pc = game.save.pcItems
-            pc[id] = pc[id] - qty
-            if pc[id] <= 0 then pc[id] = nil end
+          else
+            core.bucketSub(game.save.pcItems, id, qty)
           end
-          list.footer = Strings("Threw away\n%s.", itemName(game, id))
-          rebuild()
-        end, { noSound = true }))
-      end)
+        end,
+        rebuild = function() group.rebuild(true) end,
+      })
     end
 
-    completeSwitch = function(targetId)
+    local function completeSwitch(targetId)
       local pending = state.pendingSwap
       state.pendingSwap = nil
       if pending and pending.id ~= targetId then
@@ -453,158 +373,99 @@ function Module.install(mod, core)
         end
         if srcIdx and destIdx then
           order[srcIdx], order[destIdx] = order[destIdx], order[srcIdx]
-          playSound(game, "Swap")
+          core.playSound(game, "Swap")
         end
       end
-      rebuild()
+      group.rebuild(true)
     end
 
-    openItemActions = function(id)
+    local function openItemActions(id)
       local view = state.view
       local rows = {}
-      if view ~= "bank" then
-        rows[#rows + 1] = { label = "TO BANK", onSelect = function() startMove("bank", id) end }
-      end
-      if view ~= "bag" then
-        rows[#rows + 1] = { label = "TO BAG", onSelect = function() startMove("bag", id) end }
-      end
-      if view ~= "pc" then
-        rows[#rows + 1] = { label = "TO PC", onSelect = function() startMove("pc", id) end }
-      end
+      local function addRow(label, onSelect) rows[#rows + 1] = { label = label, onSelect = onSelect } end
+      if view ~= "bank" then addRow("TO BANK", function() startMove("bank", id) end) end
+      if view ~= "bag" then addRow("TO BAG", function() startMove("bag", id) end) end
+      if view ~= "pc" then addRow("TO PC", function() startMove("pc", id) end) end
       if view == "bag" then
-        rows[#rows + 1] = { label = "SWITCH", onSelect = function()
+        addRow("SWITCH", function()
           state.pendingSwap = { id = id }
-          rebuild()
-        end }
-      end
-      rows[#rows + 1] = { label = "TOSS", onSelect = function() startToss(id) end }
-      rows[#rows + 1] = { label = "CANCEL" }
-      local th = #rows * 2 + 2
-      game.stack:push(Menu.new(game, rows, { tx = 9, ty = math.max(0, 18 - th), tw = 11, th = th, noSound = true }))
-    end
-
-    rebuild = function()
-      list = ListMenu.new(game, viewTitle(), currentRows(), {
-        messageBox = true, noSound = true, wrap = true,
-        onChoose = function(item)
-          if state.pendingSwap then
-            completeSwitch(item.value)
-            return
+          group.rebuild(true)
+          for i, row in ipairs(group.screen.list.items) do
+            if row.value == state.pendingSwap.id then
+              group.screen.list.swapIndex = i
+              break
+            end
           end
-          openItemActions(item.value)
-        end,
-      })
-      if state.pendingSwap then
-        for i, row in ipairs(list.items) do
-          if row.value == state.pendingSwap.id then
-            list.swapIndex = i
-            break
-          end
-        end
-        list.footer = "Choose an ITEM\nto switch with."
-      else
-        list.footer = "SELECT: " .. nextViewName()
+        end)
       end
+      addRow("TOSS", function() startToss(id) end)
+      addRow("CANCEL")
+      core.rowActionsMenu(game, rows)
     end
 
-    -- Shared by screen:update's own "b" handling and the Gen1 Modern UI adapter's "back" action below.
-    backHandler = function()
-      if state.pendingSwap then
-        state.pendingSwap = nil
-        rebuild()
-      else
-        game.stack:pop()
-      end
-    end
+    local backHandler = core.pendingSwapBackHandler(state, function(preserve) group.rebuild(preserve) end, function() game.stack:pop() end)
 
-    -- Whatever pressing A on the highlighted row would do -- list.onChoose already branches on state.pendingSwap itself, so this is the one thing the Gen1 Modern UI "select" action needs to reuse.
-    chooseCurrent = function()
-      core.chooseListCurrent(list, function() game.stack:pop() end)
-    end
-
-    function screen:update(dt)
-      local input = game.input
-      if input:wasPressed("select") then
-        cycleView()
-        return
-      elseif input:wasPressed("b") then
-        backHandler()
-        return
-      end
-      list:update(dt)
-    end
-
-    function screen:draw()
-      list:draw()
-      local total = #list.items
-      local text = Strings("%d/%d", total > 0 and list.index or 0, total)
-      love.graphics.setColor(0, 0, 0, 1)
-      Font.draw(text, 160 - 8 - Font.width(text), 4)
-      love.graphics.setColor(1, 1, 1, 1)
-    end
-
-    -- Gen1 Modern UI compatibility surface -- see main.lua's externalScreen and lib/Pokemon.lua's openTransferBoxList for the full explanation.
-    -- No box concept here (item storage isn't paged), so no left/right.
-    screen.screenId = MOVE_ITEMS_SCREEN_ID
-    screen.gen1ModernUi = core.gen1ModernUiListAdapter(function() return list end, {
-      title = function() return viewTitle() end,
-      select = function(payload)
-        if payload then core.setListCursor(list, payload) end
-        chooseCurrent()
+    group = core.listGroup(game, {
+      screenId = SCREEN_ID,
+      counter = true,
+      views = { "bank", "bag", "pc" },
+      state = state,
+      label = pageLabel,
+      title = function(view)
+        local base = pageLabel(view)
+        if state.pocket == "ALL" then return base end
+        return Strings("%s (%s)", base, Items.pocketLabel(state.pocket))
       end,
-      back = function() backHandler() end,
-      start = function() cycleView() end,
-    })
-
-    rebuild()
-    game.stack:push(screen)
-  end
-
-  local function openTossItemsList(game)
-    local list
-    list = ListMenu.new(game, "TOSS ITEM", bankItemRows(game), {
-      messageBox = true, noSound = true, wrap = true,
-      onChoose = function(item)
-        local count = itemCount(item.value)
-        if count <= 0 then
-          list.footer = "The selection changed."
-          return
-        end
-        askItemQuantity(game, list, count, function(qty)
-          list.footer = Strings("Toss %s?", itemName(game, item.value))
-          game.stack:push(ChoiceBox.new(game, function(yes)
-            if not yes then
-              list.footer = nil
+      dynamicFooter = function(view, item, nextLabel)
+        if state.pendingSwap then return "Choose an ITEM\nto switch with." end
+        local detail = item and Items.itemDescriptionText(game, item.value)
+        return detail or ("\nSELECT: " .. nextLabel)
+      end,
+      build = function(view)
+        local avail = Items.availablePockets(game, storeFor(view))
+        state.pocket = core.resetCategoryIfStale(state.pocket, avail)
+        return filteredItemRows(view), {
+          messageBox = true, noSound = true, wrap = true,
+          onChoose = function(item)
+            if state.pendingSwap then
+              completeSwitch(item.value)
               return
             end
-            withdrawItem(item.value, qty)
-            mod.events:emit("mod.vrm_pokemon_bank.item_tossed", { id = item.value, qty = qty })
-            refreshItemRow(list, itemCount(item.value), item.value)
-            list.footer = Strings("Threw away\n%s.", itemName(game, item.value))
-          end, { noSound = true }))
-        end)
+            openItemActions(item.value)
+          end,
+        }
       end,
+      onClose = backHandler,
+      extraKeys = function(input)
+        if state.pendingSwap then
+          if input:wasPressed("select") or input:wasPressed("left")
+              or input:wasPressed("right") or input:wasPressed("start") then return true end
+          return false
+        end
+        if input:wasPressed("left") then cyclePocket(-1); return true end
+        if input:wasPressed("right") then cyclePocket(1); return true end
+        if input:wasPressed("start") then startMoveAll(); return true end
+        return false
+      end,
+      modernUi = {
+        left = function() cyclePocket(-1) end,
+        right = function() cyclePocket(1) end,
+        start = function() if not state.pendingSwap then group.cycleView() end end,
+        select = function(payload)
+          if payload then core.setListCursor(group.screen.list, payload) end
+          core.chooseListCurrent(group.screen.list, function() game.stack:pop() end)
+        end,
+        back = function() backHandler() end,
+      },
     })
-    game.stack:push(list)
-  end
 
-  -- WITHDRAW ITEM / DEPOSIT ITEM / MOVE ITEM / TOSS ITEM / CANCEL; keepOpen
-  -- so each list leaves this menu underneath it.
-  local function BankItemMenu(game)
-    local rows = {
-      { label = "MOVE ITEM", keepOpen = true, onSelect = function() openMoveItemsList(game) end },
-      { label = "WITHDRAW ITEM", keepOpen = true, onSelect = function() openWithdrawItemsList(game) end },
-      { label = "DEPOSIT ITEM", keepOpen = true, onSelect = function() openDepositItemsList(game) end },
-      { label = "TOSS ITEM", keepOpen = true, onSelect = function() openTossItemsList(game) end },
-      { label = "CANCEL" },
-    }
-    return Menu.new(game, rows, { tx = 0, ty = 0, tw = 16, th = #rows * 2 + 2, noSound = true })
+    return group.screen
   end
 
   mod.content.screens:register(SCREEN_ID, { new = BankItemMenu })
 
   local itemsTab = core.makeTabToggle("show_items_tab")
-  local tabEnabled = itemsTab.enabled
+  Items.tabEnabled = itemsTab.enabled
 
   -- =========================================================================
   -- Public API for other mods. See API.md for the full reference.
@@ -618,34 +479,12 @@ function Module.install(mod, core)
     return ok, err
   end
 
-  mod.exports.withdrawItem = function(id, qty)
-    local ok, err = withdrawItem(id, qty)
-    if ok then
-      mod.events:emit("mod.vrm_pokemon_bank.item_withdrawn", { id = id, qty = qty })
-    end
-    return ok, err
-  end
-
-  -- Same storage-level effect as withdrawItem (decrements the Bank's own
-  -- count) -- the difference is purely what the caller does next: withdrawItem
-  -- assumes the item is headed into a bag, tossItem assumes it is gone for
-  -- good, and each fires its own event so another mod can tell the two apart
-  -- (mirrors releasePokemon vs withdrawPokemon in lib/Pokemon.lua).
-  mod.exports.tossItem = function(id, qty)
-    local ok, err = withdrawItem(id, qty)
-    if ok then
-      mod.events:emit("mod.vrm_pokemon_bank.item_tossed", { id = id, qty = qty })
-    end
-    return ok, err
-  end
-
-  mod.exports.itemCount = itemCount
+  mod.exports.withdrawItem = core.emitOnSuccess(withdrawItem, "mod.vrm_pokemon_bank.item_withdrawn", core.idQtyPayload)
+  mod.exports.tossItem = core.emitOnSuccess(withdrawItem, "mod.vrm_pokemon_bank.item_tossed", core.idQtyPayload)
   mod.exports.listItems = listItems
 
-  mod.exports.isValidItem = function(id, game)
-    return isValidItem(id, game and game.data)
-  end
-  mod.exports.validateItemsStorage = validateStorage
+  mod.exports.isValidItem = function(id, game) return isValidItem(id, game and game.data) end
+  mod.exports.validateItemsStorage = Items.validateStorage
   mod.exports.listInvalidItems = listInvalidItems
   mod.exports.invalidItemCount = invalidItemCount
 
@@ -660,7 +499,7 @@ function Module.install(mod, core)
     return true
   end
 
-  mod.exports.setTmItemDepositAllowed = function(value)
+  function Items.setTmItemDepositAllowed(value)
     if value == nil then
       tmItemDepositOverride = nil
     else
@@ -668,28 +507,17 @@ function Module.install(mod, core)
     end
     return true
   end
-
-  mod.exports.isTmItemDepositAllowed = function()
-    return not blockTmDeposit("TM_")
-  end
-
-  mod.exports.getTmItemDepositOverride = function()
-    return tmItemDepositOverride
-  end
-
+  
+  function Items.getTmItemDepositOverride() return tmItemDepositOverride end
+  
+  mod.exports.setTmItemDepositAllowed = Items.setTmItemDepositAllowed
+  mod.exports.isTmItemDepositAllowed = function() return not blockTmDeposit("TM_") end
+  mod.exports.getTmItemDepositOverride = Items.getTmItemDepositOverride
   mod.exports.itemsScreenId = SCREEN_ID
-
   mod.exports.setItemsTabEnabled = itemsTab.setEnabled
-  mod.exports.isItemsTabEnabled = tabEnabled
-
+  mod.exports.isItemsTabEnabled = Items.tabEnabled
   mod.log:info("Pokemon Bank: Items tab ready")
-
-  return {
-    screenId = SCREEN_ID,
-    moveItemsScreenId = MOVE_ITEMS_SCREEN_ID,
-    tabEnabled = tabEnabled,
-    validateStorage = validateStorage,
-  }
+  return Items
 end
 
 return Module

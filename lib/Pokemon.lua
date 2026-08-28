@@ -4,14 +4,9 @@ local GameVersion = require("src.core.GameVersion")
 local Stats = require("src.pokemon.Stats")
 local Party = require("src.pokemon.Party")
 local Strings = require("src.core.Strings")
-local TextBox = require("src.render.TextBox")
-local Menu = require("src.ui.Menu")
-local ListMenu = require("src.ui.ListMenu")
-local ChoiceBox = require("src.ui.ChoiceBox")
-local Boxes = require("src.pokemon.Boxes")
 local Font = require("src.render.Font")
+local Boxes = require("src.pokemon.Boxes")
 
-local BOX_CAPACITY = 20
 local SCREEN_ID = "PokemonBankBox"
 local TRANSFER_BOX_SCREEN_ID = "PokemonBankTransferBox"
 local MOVE_SCREEN_ID = "PokemonBankMovePkmn"
@@ -19,16 +14,30 @@ local MOVE_SCREEN_ID = "PokemonBankMovePkmn"
 local Module = {}
 
 function Module.install(mod, core)
+  local ListMenu = mod.ui.ListMenu
+  local GenerationMap = V.require("GenerationMap")
   local loadStorage = core.loadStorage
   local markDirty = core.markDirty
   local normalizeBoxes = core.normalizeBoxes
   local message = core.message
   local monName = core.monName
-  local attachLevelIcons = core.attachLevelIcons
-  local openSummary = core.openSummary
+  local boxLabel = core.boxLabel
+  local pcBoxLabel = core.pcBoxLabel
+  local pcBoxName = core.pcBoxName
+  local pcBoxNamesTable = core.pcBoxNamesTable
+  local boxCapacity = core.boxCapacity
 
-  local function playCry(game, species)
-    pcall(function() require("src.core.Sound").playCry(game.data, species) end)
+  local Pokemon = {
+    screenId = SCREEN_ID,
+    transferBoxScreenId = TRANSFER_BOX_SCREEN_ID,
+    moveScreenId = MOVE_SCREEN_ID
+  }
+
+  function Pokemon.speciesName(game, mon)
+    if type(mon) ~= "table" then return "" end
+    if mon.isEgg then return "EGG" end
+    local def = game.data.pokemon[mon.species]
+    return (def and def.name) or tostring(mon.species)
   end
 
   local function gen2StatsComplete(stats)
@@ -59,12 +68,11 @@ function Module.install(mod, core)
     mon.toxicCounter = nil
     local movesData = game and game.data and game.data.moves
     if movesData and type(mon.moves) == "table" then
-      local gen = GameVersion.generation()
       for _, mv in ipairs(mon.moves) do
         if type(mv) == "table" and mv.id then
           local def = movesData[mv.id]
           if def then
-            if gen == 2 then
+            if GameVersion.generation() == 2 then
               mv.pp = mv.maxPp or def.pp
             else
               mv.pp = def.pp + (mv.ppUps or 0) * math.floor(def.pp / 5)
@@ -94,7 +102,6 @@ function Module.install(mod, core)
     if game and mod.options:get("auto_heal") == trigger then healMon(game, mon) end
   end
 
-  -- CRYSTAL_251 gives a mon its own held item on mon.heldItem instead of Gold's mon.item -- kept as a single field, whichever the active generation actually reads, cleared off the other so the id never sits duplicated on both.
   local function mirrorHeldItem(mon)
     if type(mon) ~= "table" then return end
     local value = mon.item or mon.heldItem
@@ -106,8 +113,6 @@ function Module.install(mod, core)
     end
   end
 
-  -- An Egg's remaining incubation is Gold's mon.eggSteps or CRYSTAL_251's mon.eggCycles -- kept as a single field matching the active generation, not both, so a hatch on either side always finds it there.
-  -- CRYSTAL_251 also keeps the moves an Egg already inherited off mon.moves and stashes them on mon.eggMoves instead; Gold puts them straight on mon.moves from the moment the Egg is made and has no eggMoves field at all. Reshaped to whichever shape the destination expects, so a hatch on either side always finds the real moveset on mon.moves.
   local function mirrorEggFields(mon)
     if type(mon) ~= "table" or mon.isEgg ~= true then return end
     local crystal251 = mod.find and mod.find("CRYSTAL_251")
@@ -131,17 +136,15 @@ function Module.install(mod, core)
     end
   end
 
-  -- Gen1 keeps a move's PP Up count on mon.moves[i].ppUps and recomputes the raised cap on every read; Gen2 instead stores that raised cap directly as mon.moves[i].maxPp and never keeps a ppUps counter at all.
   local function reshapeMoves(game, mon)
     local movesData = game and game.data and game.data.moves
     if not (movesData and type(mon.moves) == "table") then return end
-    local gen = GameVersion.generation()
     for _, mv in ipairs(mon.moves) do
       if type(mv) == "table" and mv.id then
         local def = movesData[mv.id]
         if def then
           local step = math.floor(def.pp / 5)
-          if gen == 2 then
+          if GameVersion.generation() == 2 then
             if mv.maxPp == nil then
               mv.maxPp = def.pp + (mv.ppUps or 0) * step
             end
@@ -176,18 +179,12 @@ function Module.install(mod, core)
     mon.otName = player.name
   end
 
-  -- An Egg's OT is stamped once, at creation, and Gold's own hatch preserves whatever is already there rather than re-stamping.
-  -- CRYSTAL_251's own hatch already re-stamps ot/otId at hatch time regardless of what the egg already carries, so this only changes behavior for Gold's own Day Care.
-  local function stampEggTrainer(game, mon)
-    if mon and mon.isEgg then stampTrainer(game, mon) end
-  end
+  local function stampEggTrainer(game, mon) if mon and mon.isEgg then stampTrainer(game, mon) end end
 
-  -- When INHERIT TRAINER is enabled: the withdrawing trainer becomes any Pokémon's OT, not just an Egg's. Deliberately NOT part of reshapeForActiveGame.
   local function stampNewTrainer(game, mon)
     if mod.options:get("inherit_trainer_on_withdraw") then stampTrainer(game, mon) end
   end
 
-  -- Reshaped here, once, right before a withdrawn mon actually enters the currently active game -- recomputed with the target generation's own formula over the target generation's own base stats.
   local function reshapeForActiveGame(game, mon)
     if type(mon) ~= "table" then return mon end
     local expValue = mon.exp or mon.experience
@@ -217,17 +214,21 @@ function Module.install(mod, core)
       if mon.types == nil then mon.types = def.types end
       if mon.catchRate == nil then mon.catchRate = def.catchRate end
       if mon.gender == nil then mon.gender = Mon.gender(def, mon.dvs or {}, { species = mon.species, level = mon.level }) end
+      if mon.happiness == nil then mon.happiness = 70 end
+      if mon.pokerus == nil then mon.pokerus = 0 end
     else
       if mon.stats.special == nil and baseStats.special then
         mon.stats.special = Stats.calc(def, mon.level or 1, mon.dvs or {}, mon.statExp).special
       end
       if mon.catchRate == nil then mon.catchRate = def.catchRate end
+      if mod.find and mod.find("CRYSTAL_251") then
+        if mon.happiness == nil then mon.happiness = 70 end
+        if mon.pokerus == nil then mon.pokerus = 0 end
+      end
     end
     return mon
   end
 
-  -- Mirrors Evolution's own seen/owned write. Never called on release or on a move that stays inside the Bank -- see API.md's withdrawPokemon entry.
-  -- The "owned" field itself is named differently per generation -- owned on Red/Blue/Yellow, caught on Gold -- so this writes whichever one the active save actually has.
   local function registerDex(game, species)
     local dex = game and game.save and game.save.pokedex
     if not dex then return end
@@ -236,16 +237,12 @@ function Module.install(mod, core)
     if type(owned) == "table" then owned[species] = true end
   end
 
-  -- ---------------------------------------------------------------------
-  -- Pokémon storage
-  -- ---------------------------------------------------------------------
   local function stampOrigin(mon)
     if type(mon) ~= "table" then return end
     if mon.originGame == nil then mon.originGame = GameVersion.get() end
     if mon.originGeneration == nil then mon.originGeneration = GameVersion.generation() end
   end
 
-  -- A mon deposited before originGame/originGeneration existed carries neither field. If its OT id matches the save that's currently validating the Bank, that trainer's own game/generation is the best inference of where it actually came from, so it's backfilled here instead of staying blank forever.
   local function backfillOrigin(game, mon)
     if type(mon) ~= "table" then return false end
     if mon.originGame ~= nil and mon.originGeneration ~= nil then return false end
@@ -263,8 +260,7 @@ function Module.install(mod, core)
     return changed
   end
 
-  -- Never refuses: normalizeBoxes guarantees the last box is always empty, so the search below always finds room there even when every earlier box is full.
-  local function depositMon(mon)
+  function Pokemon.depositMon(mon)
     if type(mon) ~= "table" then return nil end
     stampOrigin(mon)
     local s = loadStorage()
@@ -272,7 +268,7 @@ function Module.install(mod, core)
     local start = math.min(s.currentBox, n)
     for off = 0, n - 1 do
       local i = ((start - 1 + off) % n) + 1
-      if #s.boxes[i] < BOX_CAPACITY then
+      if #s.boxes[i] < boxCapacity() then
         table.insert(s.boxes[i], mon)
         normalizeBoxes(s)
         markDirty()
@@ -287,31 +283,40 @@ function Module.install(mod, core)
   local function isValidPokemon(mon, data)
     if type(mon) ~= "table" or type(data) ~= "table" then return false end
     local pokemon = data.pokemon
-    if type(pokemon) ~= "table" or not pokemon[mon.species] then return false end
+    if type(pokemon) ~= "table" then return false end
+    if not pokemon[mon.species] then
+      local translated = GenerationMap.translateSpeciesId(mon.species)
+      if not pokemon[translated] then return false end
+      mon.species = translated
+    end
     if mon.isEgg and GameVersion.generation() == 1 and not (mod.find and mod.find("CRYSTAL_251")) then
       return false
     end
     return true
   end
 
-  -- A held item can go stale the same way a bank item can -- an id from an uninstalled mod, or one this game's item table simply doesn't carry.
-  -- Checked on every mon that stays valid, and quarantined into the same table bank-item validation uses, rather than a separate list.
-  -- Cleared off BOTH fields at once and quarantined once, not once per field, treating them as two held items would double-count the one Pokémon is actually holding.
   local function checkHeldItem(game, mon, orphaned, lostItems)
     mirrorHeldItem(mon)
     local item = mon.item or mon.heldItem
     if not item then return false end
     local valid = mod.exports.isValidItem and mod.exports.isValidItem(item, game)
+    if not valid and mod.exports.isValidItem then
+      local translated = GenerationMap.translateItemId(item)
+      if translated ~= item and mod.exports.isValidItem(translated, game) then
+        item = translated
+        if GameVersion.generation() == 2 then mon.item = item else mon.heldItem = item end
+        valid = true
+      end
+    end
     local blacklisted = mod.exports.isBlacklisted and mod.exports.isBlacklisted(item, game)
     if valid and not blacklisted then return false end
     mon.item = nil
     mon.heldItem = nil
-    orphaned.items[item] = (orphaned.items[item] or 0) + 1
+    core.bucketAdd(orphaned.items, item, 1)
     lostItems[#lostItems + 1] = { id = item, count = 1 }
     return true
   end
 
-  -- Every bankId currently in use or still referenced, to check a freshly rolled one against: mons in the Bank's own boxes, quarantined mons in orphaned.mons, and orphaned.monMoves' own keys -- a mon that's already left the Bank still has moves waiting there under its bankId, so that id can never be handed to anyone else either.
   local function bankIdTaken(s, id)
     for _, box in ipairs(s.boxes) do
       for _, mon in ipairs(box) do
@@ -328,18 +333,16 @@ function Module.install(mod, core)
     return false
   end
 
-  -- Every stored mon's permanent identity: assigned once, kept forever (withdraw/deposit never clear it), so orphaned.monMoves below can still find a specific mon after it's left the Bank for the party or a PC box. Random rather than sequential, so a bankId reveals nothing about deposit order or how many Pokémon have ever passed through the Bank -- collision-checked against bankIdTaken above rather than trusted to the odds alone, however small they already are at this range.
   local function assignBankId(s, mon)
     if type(mon) ~= "table" or mon.bankId ~= nil then return false end
     local id
     repeat
-      id = math.random(1, 999999999)
+      id = love.math.random(1, 999999999)
     until not bankIdTaken(s, id)
     mon.bankId = id
     return true
   end
 
-  -- A species-valid mon whose moveset includes an id the active game doesn't know sets aside just that move (not the whole moveset) under its own bankId in orphaned.monMoves, rather than quarantining the mon itself -- the mon stays put and keeps every move that's still valid, until RELEARN MOVE (lib/Moves.lua) brings back whichever set-aside moves are valid again. Merges into any bucket already there instead of overwriting it, and skips an id already present so re-validating twice never duplicates an entry.
   local function scrubInvalidMoves(s, mon, orphaned, data)
     if type(mon.moves) ~= "table" or #mon.moves == 0 then return false end
     local keep, bad = {}, {}
@@ -370,7 +373,7 @@ function Module.install(mod, core)
     return true
   end
 
-  local function validateStorage(game)
+  function Pokemon.validateStorage(game)
     local data = game and game.data
     if not data then
       return { changed = false, quarantined = 0, restored = 0, lostMons = {}, restoredMons = {}, lostItems = {} }
@@ -415,7 +418,7 @@ function Module.install(mod, core)
         checkHeldItem(game, mon, orphaned, lostItems)
         if backfillOrigin(game, mon) then originBackfilled = true end
         -- Find space in current target box or create new if needed
-        if #targetBox >= BOX_CAPACITY then
+        if #targetBox >= boxCapacity() then
           s.boxes[#s.boxes + 1] = {}
           targetBoxNum = #s.boxes
           targetBox = s.boxes[targetBoxNum]
@@ -458,7 +461,7 @@ function Module.install(mod, core)
     return #orphaned
   end
 
-  local function withdrawMon(boxNum, idx)
+  function Pokemon.withdrawMon(boxNum, idx)
     local s = loadStorage()
     local box = s.boxes[boxNum]
     local mon = box and box[idx]
@@ -472,6 +475,43 @@ function Module.install(mod, core)
   local function peekMon(boxNum, idx)
     local box = loadStorage().boxes[boxNum]
     return box and box[idx] or nil
+  end
+
+  local Legality = V.require("Legality")
+  local function isLegal(mon, game)
+    reshapeForActiveGame(game, mon)
+    return Legality.isLegal(mod, core, game, mon)
+  end
+
+  local function fixLegal(mon, game) return Legality.fix(mod, core, game, mon) end
+
+  local function legalityMode()
+    local v = mod.options:get("legality_checks")
+    if v == true then return "reject" end
+    if v == false then return "off" end
+    return v
+  end
+
+  local function legalityCheckPasses(mon, game, allowFix)
+    local mode = legalityMode()
+    if mode == "off" then return true end
+    if isLegal(mon, game) then return true end
+    if mode == "force_fix" then return fixLegal(mon, game) end
+    if mode == "fix" and allowFix then return fixLegal(mon, game) end
+    return false
+  end
+
+  local function needsLegalityFix(mon, game) return legalityMode() == "fix" and not isLegal(mon, game) end
+
+  local function meetsGenerationFloor(mon)
+    if type(mon) ~= "table" then return true end
+    return GameVersion.generation() >= (mon.minGeneration or 0)
+  end
+
+  local function withdrawEligible(mon, game, allowFix)
+    if not meetsGenerationFloor(mon) then return false, "generation" end
+    if not legalityCheckPasses(mon, game, allowFix) then return false, "illegal" end
+    return true
   end
 
   local function moveMon(srcBox, srcIdx, destBox, destIdx)
@@ -489,7 +529,7 @@ function Module.install(mod, core)
       markDirty()
       return true
     end
-    if #to >= BOX_CAPACITY then return false, "full" end
+    if #to >= boxCapacity() then return false, "full" end
     table.remove(from, srcIdx)
     table.insert(to, mon)
     normalizeBoxes(s)
@@ -521,186 +561,312 @@ function Module.install(mod, core)
   -- =========================================================================
   -- Pokémon UI
   -- =========================================================================
-  -- action + STATS + CANCEL, the vanilla PC's own per-mon submenu
-  local function monSubmenu(game, action, mon, onAction)
-    game.stack:push(Menu.new(game, {
-      { label = action, onSelect = onAction },
-      { label = "STATS", keepOpen = true, onSelect = function()
-          ensureStats(game, mon)
-          openSummary(game, mon)
-        end },
-      { label = "CANCEL" },
-    }, { tx = 9, ty = 10, tw = 11, th = 8, noSound = true }))
-  end
-
-  local function openWithdrawList(game)
-    local s = loadStorage()
-    local boxNum = s.currentBox
-    local box = s.boxes[boxNum]
-    if #box == 0 then
-      message(game, "What? There are\nno POKéMON here!")
-      return
-    end
-    if #game.save.party >= Party.MAX then
-      message(game, "You can't take\nany more POKéMON.\fDeposit POKéMON\nfirst.")
-      return
-    end
-    local items = {}
-    for i, mon in ipairs(box) do
-      items[#items + 1] = { label = monName(game, mon), value = i }
-    end
-    local list
-    list = ListMenu.new(game, Strings("BOX %d (WITHDRAW)", boxNum), items, {
-      noSound = true, wrap = true,
-      onChoose = function(item)
-        local mon = box[item.value]
-        if not mon then return end
-        monSubmenu(game, "WITHDRAW", mon, function()
-          if #game.save.party >= Party.MAX then
-            list.footer = "The party is full!"
-            return
-          end
-          table.remove(box, item.value)
-          normalizeBoxes(s)
-          markDirty()
-          reshapeForActiveGame(game, mon)
-          stampNewTrainer(game, mon)
-          autoHealMon("withdraw", game, mon)
-          table.insert(game.save.party, mon)
-          registerDex(game, mon.species)
-          mod.events:emit("mod.vrm_pokemon_bank.pokemon_withdrawn",
-            { box = boxNum, index = item.value, mon = mon })
-          local name = monName(game, mon)
-          list:close()
-          message(game, ("%s is\ntaken out.\vGot %s."):format(name, name))
-        end)
-      end,
-    })
-    attachLevelIcons(list, box)
-    game.stack:push(list)
-  end
-
-  local function openDepositList(game)
-    if #game.save.party <= 1 then
-      message(game, "You can't deposit\nthe last Pokemon!")
-      return
-    end
-    local items = {}
-    for i, mon in ipairs(game.save.party) do
-      items[#items + 1] = { label = monName(game, mon), value = i }
-    end
-    local list = ListMenu.new(game, "PARTY (DEPOSIT)", items, {
-      noSound = true, wrap = true,
-      onChoose = function(item, list)
-        local mon = game.save.party[item.value]
-        if not mon then return end
-        monSubmenu(game, "DEPOSIT", mon, function()
-          if #game.save.party <= 1 then
-            list.footer = "You need at least\none POKéMON!"
-            return
-          end
-          table.remove(game.save.party, item.value)
-          ensureStats(game, mon)
-          autoHealMon("deposit", game, mon)
-          local boxNum, slot = depositMon(mon)
-          mod.events:emit("mod.vrm_pokemon_bank.pokemon_deposited",
-            { box = boxNum, index = slot, mon = mon })
-          local name = monName(game, mon)
-          list:close()
-          message(game, ("%s was\nstored in BANK BOX %d."):format(name, boxNum))
-        end)
-      end,
-    })
-    attachLevelIcons(list, game.save.party)
-    game.stack:push(list)
-  end
-
-  local function openReleaseList(game)
-    local s = loadStorage()
-    local boxNum = s.currentBox
-    local box = s.boxes[boxNum]
-    if #box == 0 then
-      message(game, "What? There are\nno POKéMON here!")
-      return
-    end
-    local items = {}
-    for i, mon in ipairs(box) do
-      items[#items + 1] = { label = monName(game, mon), value = i }
-    end
-    local list = ListMenu.new(game, ("BOX %d (RELEASE)"):format(boxNum), items, {
-      noSound = true, wrap = true,
-      onChoose = function(_, list)
-        local mon = box[list.index]
-        if not mon then return end
-        local name = monName(game, mon)
-        game.stack:push(TextBox.new(game,
-          Strings("Once released,\n%s is\ngone forever. OK?", name), function()
-          game.stack:push(ChoiceBox.new(game, function(yes)
-            if not yes then return end
-            local current = box[list.index]
-            if current ~= mon then
-              message(game, "The selection changed.\nTry again.")
-              return
-            end
-            table.remove(box, list.index)
-            normalizeBoxes(s)
-            markDirty()
-            playCry(game, mon.species)
-            mod.events:emit("mod.vrm_pokemon_bank.pokemon_released",
-              { box = boxNum, index = list.index, mon = mon })
-            message(game, Strings("%s was\nreleased.\fBye %s!", name, name))
-            list:removeCurrent()
-          end, { defaultNo = true, noSound = true }))
-        end))
-      end,
-    })
-    attachLevelIcons(list, box)
-    game.stack:push(list)
-  end
-
-  local function openChangeBoxList(game)
-    local s = loadStorage()
+  local function buildBoxRows(s)
+    local cap = boxCapacity()
     local items = {}
     for i = 1, #s.boxes do
-      local mark = i == s.currentBox and "*" or " "
       items[#items + 1] = {
-        label = ("%sBOX %d"):format(mark, i),
-        right = ("%d/%d"):format(#s.boxes[i], BOX_CAPACITY),
+        label = boxLabel(s, i),
+        sub = cap == math.huge and tostring(#s.boxes[i]) or ("%d/%d"):format(#s.boxes[i], cap),
         value = i,
       }
     end
-    game.stack:push(ListMenu.new(game, "CHANGE BOX", items, {
-      noSound = true, wrap = true,
-      onChoose = function(item, list)
+    return items
+  end
+
+  local function attachCurrentBoxMark(list, currentBoxNumFn)
+    local origDraw = list.draw
+    function list:draw()
+      origDraw(self)
+      love.graphics.setColor(0, 0, 0, 1)
+      local current = currentBoxNumFn()
+      for row = 1, self.rows do
+        local item = self.items[self.scroll + row]
+        if item and item.value == current then
+          local y = self.itemBox and (32 + (row - 1) * 16) or (8 + row * 16)
+          local x0 = self.itemBox and 48 or 16
+          local x = x0 + Font.width(item.label) + 6
+          love.graphics.rectangle("fill", x, y + 2, 4, 4)
+        end
+      end
+      love.graphics.setColor(1, 1, 1, 1)
+    end
+  end
+
+  local function drawCurrentBoxTitleMark(list)
+    love.graphics.setColor(0, 0, 0, 1)
+    local x = 8 + Font.width(Strings(list.title)) + 6
+    love.graphics.rectangle("fill", x, 4 + 2, 4, 4)
+    love.graphics.setColor(1, 1, 1, 1)
+  end
+
+  local function renameBox(game, view, boxNum, onDone)
+    local current = view == "bank" and ((loadStorage().boxNames or {})[boxNum] or "") or (pcBoxName(game, boxNum) or "")
+    local function apply(name)
+      local value = (name and #name > 0) and name or nil
+      if view == "bank" then
         local st = loadStorage()
-        st.currentBox = math.max(1, math.min(#st.boxes, item.value))
+        st.boxNames = st.boxNames or {}
+        st.boxNames[boxNum] = value
         markDirty()
-        list:close()
-      end,
+      else
+        pcBoxNamesTable()[boxNum] = value
+        if GameVersion.generation() == 2 then require("src.core.gen2.Boxes").rename(game.save, boxNum, value) end
+      end
+      if onDone then onDone() end
+    end
+    if GameVersion.generation() == 2 then
+      local Screens = require("src.ui.Screens")
+      if not pcall(Screens.get, game, "Gen2NamingScreen") then return end
+      Screens.push(game, "Gen2NamingScreen", {
+        type = "box",
+        initial = current,
+        onDone = function(name) game.stack:pop(); apply(name) end,
+        onCancel = function() game.stack:pop() end,
+      })
+      return
+    end
+    game.stack:push(require("src.ui.NamingScreen").new(game, {
+      title = "BOX NAME?", default = current, maxLen = 8,
+      onDone = apply,
     }))
   end
 
-  -- TRANSFER BOX: a two-step box picker.
-  -- It commits the WHOLE box currently on screen as either the source or the destination, since this moves every Pokémon in a box in one go.
-  -- Stage 1 ("source"): SELECT still alternates BANK/PC, and A on a non-empty box locks it in as the source and flips to the other storage.
-  -- Stage 2 ("destination"): SELECT is locked out (the whole point is the other storage), A asks to confirm before calling the bulk exports.
-  local function openTransferBoxList(game)
+  local function deleteBox(game, boxNum, onDone)
+    local s = loadStorage()
+    local box = s.boxes[boxNum]
+    if not box or #box > 0 then
+      message(game, "That box still\nhas POKéMON\nin it!")
+      if onDone then onDone() end
+      return
+    end
+    table.remove(s.boxes, boxNum)
+    if s.boxNames then
+      local shifted = {}
+      for i, name in pairs(s.boxNames) do
+        if i < boxNum then shifted[i] = name
+        elseif i > boxNum then shifted[i - 1] = name end
+      end
+      s.boxNames = shifted
+    end
+    normalizeBoxes(s)
+    markDirty()
+    if onDone then onDone() end
+  end
+
+  local openTransferBoxList
+  local openMoveList
+
+  local function openBoxActionsPopup(game, view, boxNum, callbacks)
+    local rows = {}
+    local function appendRow(label, onSelect) rows[#rows + 1] = { label = label, onSelect = onSelect }  end
+    if callbacks.onView then appendRow("VIEW", callbacks.onView) end
+    appendRow("CHANGE", function()
+      if view == "bank" then
+        local st = loadStorage()
+        st.currentBox = math.max(1, math.min(#st.boxes, boxNum))
+        markDirty()
+      else
+        game.save.currentBox = math.max(1, math.min(Boxes.COUNT, boxNum))
+      end
+      callbacks.afterAction()
+    end)
+    appendRow("SWITCH", function() callbacks.onSwitch(boxNum) end)
+    appendRow("TRANSFER", function() openTransferBoxList(game, { view = view, box = boxNum }, callbacks.afterAction) end)
+    appendRow("RENAME", function() renameBox(game, view, boxNum, callbacks.afterAction) end)
+    if view == "bank" then appendRow("DELETE", function() deleteBox(game, boxNum, callbacks.afterAction) end) end
+    appendRow("CANCEL")
+    core.rowActionsMenu(game, rows)
+  end
+
+  local function openManageBoxList(game, opts)
+    opts = opts or {}
+    Boxes.ensure(game.save)
+    local state = { view = opts.initialView or "bank", pendingSwap = nil }
+    local screen = { isOpaque = true }
+    local list
+    local refresh, openBoxActionsMenu, cycleView, backHandler, closeList
+
+    local function boxesOf() return state.view == "bank" and loadStorage().boxes or game.save.boxes end
+
+    local function currentBoxNumOf() return state.view == "bank" and loadStorage().currentBox or game.save.currentBox end
+
+    local function viewTitle() return state.view == "bank" and "BANK" or "PC" end
+
+    local function rowsForView()
+      if state.view == "bank" then return buildBoxRows(loadStorage()) end
+      local pcNames = pcBoxNamesTable()
+      local boxes = game.save.boxes
+      local items = {}
+      for i = 1, Boxes.COUNT do
+        local name = pcNames[i]
+        local label = (type(name) == "string" and name ~= "") and name or Strings("BOX %d", i)
+        items[#items + 1] = { label = label, sub = ("%d/%d"):format(#boxes[i], Boxes.CAPACITY), value = i }
+      end
+      return items
+    end
+
+    refresh = function(preserveCursor)
+      local oldIndex = preserveCursor and list.index
+      list.items = rowsForView()
+      list.title = viewTitle()
+      core.setListCursor(list, oldIndex or 1)
+      list.footer = state.pendingSwap and "Choose a box\nto switch with." or nil
+      list.swapIndex = state.pendingSwap
+    end
+
+    cycleView = function()
+      if state.pendingSwap then return end
+      state.view = state.view == "bank" and "pc" or "bank"
+      refresh()
+    end
+
+    closeList = function(navigateTo)
+      if opts.onClose then opts.onClose(navigateTo) end
+      game.stack:pop()
+    end
+
+    openBoxActionsMenu = function(boxNum)
+      openBoxActionsPopup(game, state.view, boxNum, {
+        onView = function()
+          if opts.onClose then
+            closeList({ view = state.view, box = boxNum })
+          else
+            closeList(nil)
+            game.stack:push(openMoveList(game, { initialView = state.view, initialBox = boxNum }))
+          end
+        end,
+        onSwitch = function(bn)
+          state.pendingSwap = bn
+          refresh(true)
+        end,
+        afterAction = function() refresh(true) end,
+      })
+    end
+
+    backHandler = core.pendingSwapBackHandler(state, refresh, function() closeList(nil) end)
+
+    function screen:update(dt)
+      local input = game.input
+      if input:wasPressed("select") then
+        cycleView()
+        return
+      elseif input:wasPressed("b") then
+        backHandler()
+        return
+      end
+      list:update(dt)
+    end
+
+    function screen:draw()
+      list:draw()
+      core.drawListTitle(list)
+      core.drawListCounter(list)
+    end
+
+    list = ListMenu.new(game, viewTitle(), rowsForView(), {
+      messageBox = true, noSound = true, wrap = true,
+      onChoose = function(item)
+        if state.pendingSwap then
+          local boxes = boxesOf()
+          local a, b = state.pendingSwap, item.value
+          state.pendingSwap = nil
+          if a ~= b then
+            boxes[a], boxes[b] = boxes[b], boxes[a]
+            if state.view == "bank" then
+              local st = loadStorage()
+              st.boxNames = st.boxNames or {}
+              st.boxNames[a], st.boxNames[b] = st.boxNames[b], st.boxNames[a]
+              if st.currentBox == a then st.currentBox = b
+              elseif st.currentBox == b then st.currentBox = a end
+              normalizeBoxes(st)
+              markDirty()
+            else
+              local pcNames = pcBoxNamesTable()
+              pcNames[a], pcNames[b] = pcNames[b], pcNames[a]
+              if game.save.currentBox == a then game.save.currentBox = b
+              elseif game.save.currentBox == b then game.save.currentBox = a end
+            end
+            core.playSound(game, "Swap")
+          end
+          refresh(true)
+          return
+        end
+        openBoxActionsMenu(item.value)
+      end,
+    })
+    attachCurrentBoxMark(list, currentBoxNumOf)
+    if opts.initialBox then core.setListCursor(list, opts.initialBox) end
+    return screen
+  end
+
+  local function transferBankBox(srcBoxNum, destBoxNum)
+    local s = loadStorage()
+    local src = s.boxes[srcBoxNum]
+    local dest = s.boxes[destBoxNum]
+    if not src or #src == 0 or not dest then return 0, 0 end
+    local mons = {}
+    for i = 1, #src do mons[i] = src[i] end
+    local leftover = {}
+    local cap = boxCapacity()
+    local moved = 0
+    for _, mon in ipairs(mons) do
+      if #dest < cap then
+        table.insert(dest, mon)
+        moved = moved + 1
+      else
+        leftover[#leftover + 1] = mon
+      end
+    end
+    for i = #src, 1, -1 do table.remove(src, i) end
+    for _, mon in ipairs(leftover) do table.insert(src, mon) end
+    normalizeBoxes(s)
+    markDirty()
+    return moved, #leftover
+  end
+
+  local function transferPcBox(game, srcBoxNum, destBoxNum)
+    Boxes.ensure(game.save)
+    local boxes = game.save.boxes
+    local src = boxes[srcBoxNum]
+    if not src or #src == 0 then return 0, 0 end
+    local mons = {}
+    for i = 1, #src do mons[i] = src[i] end
+    local leftover = {}
+    local cursor = destBoxNum
+    local moved = 0
+    for _, mon in ipairs(mons) do
+      local placed = false
+      for off = 0, Boxes.COUNT - 1 do
+        local boxNum = ((cursor - 1 + off) % Boxes.COUNT) + 1
+        if boxNum ~= srcBoxNum and #boxes[boxNum] < Boxes.CAPACITY then
+          table.insert(boxes[boxNum], mon)
+          cursor = boxNum
+          moved = moved + 1
+          placed = true
+          break
+        end
+      end
+      if not placed then leftover[#leftover + 1] = mon end
+    end
+    for i = #src, 1, -1 do table.remove(src, i) end
+    for _, mon in ipairs(leftover) do table.insert(src, mon) end
+    return moved, #leftover
+  end
+
+  openTransferBoxList = function(game, source, onTransferred)
     Boxes.ensure(game.save)
     local state = {
-      stage = "source",
-      view = "bank",
-      bankBox = loadStorage().currentBox,
-      pcBox = math.max(1, math.min(Boxes.COUNT, game.save.currentBox or 1)),
-      source = nil,
+      view = source.view,
+      bankBox = source.view == "bank" and source.box or loadStorage().currentBox,
+      pcBox = source.view == "pc" and source.box or math.max(1, math.min(Boxes.COUNT, game.save.currentBox or 1)),
     }
 
     local screen = { isOpaque = true }
     local list
     local rebuild, backHandler
 
-    local function currentBoxNum()
-      return state.view == "bank" and state.bankBox or state.pcBox
-    end
+    local function currentBoxNum() return state.view == "bank" and state.bankBox or state.pcBox end
 
     local function currentBox()
       if state.view == "bank" then return loadStorage().boxes[state.bankBox]
@@ -708,92 +874,84 @@ function Module.install(mod, core)
     end
 
     local function viewTitle()
-      if state.view == "bank" then return Strings("BANK BOX %d", state.bankBox)
-      else return Strings("PC BOX %d", state.pcBox) end
+      if state.view == "bank" then return boxLabel(loadStorage(), state.bankBox)
+      else return pcBoxLabel(game, state.pcBox) end
     end
 
+    local function isSourceBox() return state.view == source.view and currentBoxNum() == source.box end
+
     local function cycleView()
-      if state.stage == "destination" then return end -- locked to the other storage
       state.view = (state.view == "bank") and "pc" or "bank"
       rebuild()
     end
 
     local function cycleBox(delta)
       if state.view == "bank" then
-        local n = #loadStorage().boxes
-        if n <= 1 then return end
-        state.bankBox = ((state.bankBox - 1 + delta) % n) + 1
-      else
-        state.pcBox = ((state.pcBox - 1 + delta) % Boxes.COUNT) + 1
-      end
+        state.bankBox = core.cycleBoxNumber(state.bankBox, #loadStorage().boxes, delta)
+      else state.pcBox = core.cycleBoxNumber(state.pcBox, Boxes.COUNT, delta) end
       rebuild()
     end
 
-    local function performTransfer()
-      local src = state.source
+    local function performTransfer(fix)
+      local destView = state.view
       local destBoxNum = currentBoxNum()
-      state.stage = "source"
-      state.source = nil
-      if src.view == "bank" then
-        local result = mod.exports.withdrawToBox(game, destBoxNum, { boxNum = src.box, indices = nil })
-        local transferred = result and #result.withdrawn or 0
-        if transferred > 0 then
-          local msg = Strings("Transferred %d\nPOKéMON to\nPC BOX %d.", transferred, destBoxNum)
-          if result.remaining > 0 then msg = msg .. Strings("\n%d remained.", result.remaining) end
-          message(game, msg)
-        else
-          message(game, "No POKéMON\ntransferred.\nPC may be full.")
-        end
+      local destLabel = viewTitle()
+      local transferred, remaining
+      if source.view == "bank" and destView == "bank" then
+        transferred, remaining = transferBankBox(source.box, destBoxNum)
+      elseif source.view == "bank" and destView == "pc" then
+        local result = mod.exports.withdrawToBox(game, destBoxNum, { boxNum = source.box, indices = nil, fix = fix })
+        transferred = result and #result.withdrawn or 0
+        remaining = result and result.remaining or 0
+      elseif source.view == "pc" and destView == "bank" then
+        local result = mod.exports.depositBoxPokemon(game, source.box, { boxNum = destBoxNum, indices = nil })
+        transferred, remaining = result and #result or 0, 0
+      else -- pc -> pc
+        transferred, remaining = transferPcBox(game, source.box, destBoxNum)
+      end
+      if transferred > 0 then
+        local msg = Strings("Transferred %d\nPOKéMON to\n%s.", transferred, destLabel)
+        if remaining > 0 then msg = msg .. Strings("\n%d remained.", remaining) end
+        message(game, msg)
+        if onTransferred then onTransferred() end
       else
-        local result = mod.exports.depositBoxPokemon(game, src.box, { boxNum = destBoxNum, indices = nil })
-        local transferred = result and #result or 0
-        if transferred > 0 then
-          message(game, Strings("Transferred %d\nPOKéMON to\nthe BANK.", transferred))
-        else
-          message(game, "No POKéMON\ntransferred.")
-        end
+        message(game, destView == "pc" and "No POKéMON\ntransferred.\nPC may be full." or "No POKéMON\ntransferred.")
       end
       rebuild()
     end
 
     local function confirmTransfer()
-      local src = state.source
-      local srcLabel = src.view == "bank" and Strings("BANK BOX %d", src.box) or Strings("PC BOX %d", src.box)
+      local srcLabel = source.view == "bank" and boxLabel(loadStorage(), source.box) or pcBoxLabel(game, source.box)
       local destLabel = viewTitle()
-      game.stack:push(TextBox.new(game,
-        Strings("Transfer %s\nto %s?", srcLabel, destLabel), function()
-        game.stack:push(ChoiceBox.new(game, function(yes)
-          if yes then performTransfer() end
-        end, { defaultNo = true, noSound = true }))
-      end))
+      local function askTransfer(fix)
+        core.confirm(game, Strings("Transfer %s\nto %s?", srcLabel, destLabel), function(yes)
+          if yes then performTransfer(fix) end
+        end, { defaultNo = true, noSound = true })
+      end
+      if source.view == "bank" and state.view == "pc" then
+        local needing = 0
+        for _, mon in ipairs(loadStorage().boxes[source.box] or {}) do
+          if needsLegalityFix(mon, game) then needing = needing + 1 end
+        end
+        if needing > 0 then
+          core.confirm(game, Strings("%d POKéMON need\nto be fixed. OK?", needing), function(yes)
+            askTransfer(yes)
+          end, { defaultNo = true, noSound = true })
+          return
+        end
+      end
+      askTransfer(false)
     end
 
     local function chooseThisBox()
-      if state.stage == "source" then
-        if #currentBox() == 0 then
-          message(game, "What? There are\nno POKéMON here!")
-          return
-        end
-        state.source = { view = state.view, box = currentBoxNum() }
-        state.stage = "destination"
-        state.view = (state.view == "bank") and "pc" or "bank"
-        rebuild()
-      else
-        confirmTransfer()
+      if isSourceBox() then
+        message(game, "What? You can't\ntransfer a box\nto itself!")
+        return
       end
+      confirmTransfer()
     end
 
-    -- Shared by screen:update's own "b" handling and the Gen1 Modern UI adapter's "back" action below, so a touch/mouse BACK does exactly what the B button does.
-    backHandler = function()
-      if state.stage == "destination" then
-        state.view = state.source.view
-        state.stage = "source"
-        state.source = nil
-        rebuild()
-      else
-        game.stack:pop()
-      end
-    end
+    backHandler = function() game.stack:pop() end
 
     rebuild = function()
       core.clampBoxState(state, loadStorage, Boxes.COUNT)
@@ -802,11 +960,9 @@ function Module.install(mod, core)
       for i, mon in ipairs(box) do
         rows[#rows + 1] = { label = monName(game, mon), value = i }
       end
-      list = ListMenu.new(game, viewTitle(), rows, { noSound = true, rows = 6, wrap = true })
-      attachLevelIcons(list, box)
-      list.footer = state.stage == "source"
-        and ("A: PICK BOX\nSELECT: " .. (state.view == "bank" and "PC" or "BANK"))
-        or "A: CONFIRM"
+      list = ListMenu.new(game, viewTitle(), rows, { messageBox = true, noSound = true, wrap = true })
+      core.attachLevelIcons(list, box)
+      list.footer = "A: CONFIRM\nSELECT: " .. (state.view == "bank" and "PC" or "BANK")
     end
 
     function screen:update(dt)
@@ -832,14 +988,10 @@ function Module.install(mod, core)
 
     function screen:draw()
       list:draw()
-      local total = #list.items
-      local text = Strings("%d/%d", total > 0 and list.index or 0, total)
-      love.graphics.setColor(0, 0, 0, 1)
-      Font.draw(text, 160 - 8 - Font.width(text), 4)
-      love.graphics.setColor(1, 1, 1, 1)
+      core.drawListTitle(list)
+      core.drawListCounter(list)
     end
 
-    -- Gen1 Modern UI compatibility surface: read-only accessors plus semantic actions so the presenter can paint this screen, and a touch/mouse user can drive it
     screen.screenId = TRANSFER_BOX_SCREEN_ID
     screen.gen1ModernUi = core.gen1ModernUiListAdapter(function() return list end, {
       title = function() return viewTitle() end,
@@ -857,15 +1009,13 @@ function Module.install(mod, core)
     game.stack:push(screen)
   end
 
-  -- Direct PARTY <-> PC moves bypass the Bank entirely (nothing here ever touches loadStorage()/markDirty) -- only reachable from the MOVE screen below, so these stay local instead of joining the exports table.
   local function pcToParty(game, pcBoxNum, index)
     Boxes.ensure(game.save)
     if #game.save.party >= Party.MAX then return false end
     local box = game.save.boxes[pcBoxNum]
     local mon = box and box[index]
     if not mon then return false end
-    -- mirrors BoxMenu.withdraw's own Stats.ensure: a box mon carries no stat block on some imported .sav files
-    Stats.ensure(game.data.pokemon[mon.species], mon)
+    ensureStats(game, mon)
     table.remove(box, index)
     table.insert(game.save.party, mon)
     return true
@@ -887,19 +1037,18 @@ function Module.install(mod, core)
     return false
   end
 
-  -- MOVE <PK><MN>: SELECT cycles BANK > PARTY > PC, on BANK/PC, Left/Right cycles boxes. A on a Pokémon opens TO <other two storages>/SWITCH/STATS/RELEASE/CANCEL.
-  -- SWITCH pins the source slot and stays armed while Left/Right keeps browsing boxes, so the target can be anywhere in the same storage.
-  local function openMoveList(game)
+  openMoveList = function(game, opts)
+    opts = opts or {}
     Boxes.ensure(game.save)
     local state = {
-      view = "bank",
-      bankBox = loadStorage().currentBox,
-      pcBox = math.max(1, math.min(Boxes.COUNT, game.save.currentBox or 1)),
+      view = opts.initialView or "bank",
+      bankBox = (opts.initialView == "bank" and opts.initialBox) or loadStorage().currentBox,
+      pcBox = (opts.initialView == "pc" and opts.initialBox) or math.max(1, math.min(Boxes.COUNT, game.save.currentBox or 1)),
       pendingSwap = nil,
     }
 
     local screen = { isOpaque = true }
-    local list -- current ListMenu; rebuilt on every view/box/data change
+    local list
 
     local rebuild, performMove, releaseCurrent, completeSwitch, openMonActions, backHandler, chooseCurrent
 
@@ -910,12 +1059,11 @@ function Module.install(mod, core)
     end
 
     local function viewTitle()
-      if state.view == "bank" then return Strings("BANK BOX %d", state.bankBox)
+      if state.view == "bank" then return boxLabel(loadStorage(), state.bankBox)
       elseif state.view == "party" then return "PARTY"
-      else return Strings("PC BOX %d", state.pcBox) end
+      else return pcBoxLabel(game, state.pcBox) end
     end
 
-    -- BANK > PARTY > PC > BANK, matching cycleView below -- what SELECT switches TO from the current view, for the footer hint.
     local function nextViewName()
       if state.view == "bank" then return "PARTY"
       elseif state.view == "party" then return "PC"
@@ -932,17 +1080,40 @@ function Module.install(mod, core)
 
     local function cycleBox(delta)
       if state.view == "bank" then
-        local n = #loadStorage().boxes
-        if n <= 1 then return end
-        state.bankBox = ((state.bankBox - 1 + delta) % n) + 1
+        state.bankBox = core.cycleBoxNumber(state.bankBox, #loadStorage().boxes, delta)
         rebuild()
       elseif state.view == "pc" then
-        state.pcBox = ((state.pcBox - 1 + delta) % Boxes.COUNT) + 1
+        state.pcBox = core.cycleBoxNumber(state.pcBox, Boxes.COUNT, delta)
         rebuild()
       end
     end
 
-    performMove = function(destView, idx)
+    local function currentBoxNumForView()
+      if state.view == "bank" then return state.bankBox
+      elseif state.view == "pc" then return state.pcBox end
+      return nil
+    end
+
+    local function openBoxOptionsMenu()
+      if state.view == "party" then return end
+      local boxNum = currentBoxNumForView()
+      game.stack:push(openManageBoxList(game, {
+        initialView = state.view,
+        initialBox = boxNum,
+        onClose = function(navigateTo)
+          if navigateTo then
+            state.view = navigateTo.view
+            if navigateTo.view == "bank" then state.bankBox = navigateTo.box
+            else state.pcBox = navigateTo.box end
+            rebuild()
+          else
+            rebuild(true)
+          end
+        end,
+      }))
+    end
+
+    performMove = function(destView, idx, fix)
       local srcView = state.view
       if destView == "party" and #game.save.party >= Party.MAX then
         return false, "The party is full!"
@@ -952,15 +1123,15 @@ function Module.install(mod, core)
           if #game.save.party <= 1 then return false, "You need at least\none POKéMON!" end
           local deposited = mod.exports.depositPartyPokemon(game, { indices = { idx }, boxNum = state.bankBox })
           if not deposited or #deposited == 0 then return false, "It didn't work!" end
-          return true, Strings("Stored in\nBANK BOX %d.", deposited[1].box)
+          return true, Strings("Stored in\n%s.", boxLabel(loadStorage(), deposited[1].box))
         elseif srcView == "pc" then
           local deposited = mod.exports.depositBoxPokemon(game, state.pcBox, { indices = { idx }, boxNum = state.bankBox })
           if not deposited or #deposited == 0 then return false, "It didn't work!" end
-          return true, Strings("Stored in\nBANK BOX %d.", deposited[1].box)
+          return true, Strings("Stored in\n%s.", boxLabel(loadStorage(), deposited[1].box))
         end
       elseif destView == "party" then
         if srcView == "bank" then
-          local result = mod.exports.withdrawToParty(game, { boxNum = state.bankBox, indices = { idx } })
+          local result = mod.exports.withdrawToParty(game, { boxNum = state.bankBox, indices = { idx }, fix = fix })
           if not result or #result.withdrawn == 0 then return false, "It didn't work!" end
           return true, "Added to\nthe PARTY."
         elseif srcView == "pc" then
@@ -969,14 +1140,14 @@ function Module.install(mod, core)
         end
       elseif destView == "pc" then
         if srcView == "bank" then
-          local result = mod.exports.withdrawToBox(game, state.pcBox, { boxNum = state.bankBox, indices = { idx } })
+          local result = mod.exports.withdrawToBox(game, state.pcBox, { boxNum = state.bankBox, indices = { idx }, fix = fix })
           if not result or #result.withdrawn == 0 then return false, "PC BOX is full!" end
-          return true, Strings("Stored in\nPC BOX %d.", result.withdrawn[1].pcBox)
+          return true, Strings("Stored in\n%s.", pcBoxLabel(game, result.withdrawn[1].pcBox))
         elseif srcView == "party" then
           if #game.save.party <= 1 then return false, "You need at least\none POKéMON!" end
           local ok, placedBox = partyToPc(game, idx, state.pcBox)
           if not ok then return false, "PC BOX is full!" end
-          return true, Strings("Stored in\nPC BOX %d.", placedBox)
+          return true, Strings("Stored in\n%s.", pcBoxLabel(game, placedBox))
         end
       end
       return false, "It didn't work!"
@@ -1007,7 +1178,7 @@ function Module.install(mod, core)
           end
         end
       end
-      rebuild()
+      rebuild(true)
     end
 
     releaseCurrent = function(idx, mon)
@@ -1016,29 +1187,26 @@ function Module.install(mod, core)
         return
       end
       local name = monName(game, mon)
-      game.stack:push(TextBox.new(game,
-        Strings("Once released,\n%s is\ngone forever. OK?", name), function()
-        game.stack:push(ChoiceBox.new(game, function(yes)
-          if not yes then return end
-          local src = currentList()
-          local current = src[idx]
-          if current ~= mon then
-            message(game, "The selection changed.\nTry again.")
-            return
-          end
-          table.remove(src, idx)
-          if state.view == "bank" then
-            local st = loadStorage()
-            normalizeBoxes(st)
-            markDirty()
-            mod.events:emit("mod.vrm_pokemon_bank.pokemon_released",
-              { box = state.bankBox, index = idx, mon = mon })
-          end
-          playCry(game, mon.species)
-          message(game, Strings("%s was\nreleased.\fBye %s!", name, name))
-          rebuild()
-        end, { defaultNo = true, noSound = true }))
-      end))
+      core.confirmRelease(game, name, function(yes)
+        if not yes then return end
+        local src = currentList()
+        local current = src[idx]
+        if current ~= mon then
+          message(game, "The selection changed.\nTry again.")
+          return
+        end
+        table.remove(src, idx)
+        if state.view == "bank" then
+          local st = loadStorage()
+          normalizeBoxes(st)
+          markDirty()
+          mod.events:emit("mod.vrm_pokemon_bank.pokemon_released",
+            { box = state.bankBox, index = idx, mon = mon })
+        end
+        core.playCry(game, mon.species)
+        message(game, Strings("%s was\nreleased.\fBye %s!", name, name))
+        rebuild(true)
+      end)
     end
 
     openMonActions = function(mon, idx)
@@ -1046,9 +1214,14 @@ function Module.install(mod, core)
       local rows = {}
       local function addTo(label, destView)
         rows[#rows + 1] = { label = label, onSelect = function()
-          local _, msg = performMove(destView, idx)
-          rebuild()
-          list.footer = msg
+          local function commit(fix)
+            local _, msg = performMove(destView, idx, fix)
+            rebuild(true)
+            list.footer = msg
+          end
+          if view == "bank" and (destView == "party" or destView == "pc") and needsLegalityFix(mon, game) then
+            core.confirm(game, "This POKéMON\nneeds to be fixed.\nOK?", function(yes) commit(yes) end, { defaultNo = true, noSound = true })
+          else commit(false) end
         end }
       end
       if view ~= "bank" then addTo("TO BANK", "bank") end
@@ -1060,28 +1233,26 @@ function Module.install(mod, core)
           box = (view == "bank" and state.bankBox) or (view == "pc" and state.pcBox) or nil,
           index = idx,
         }
-        rebuild()
+        rebuild(true)
       end }
       rows[#rows + 1] = { label = "STATS", keepOpen = true, onSelect = function()
         ensureStats(game, mon)
-        openSummary(game, mon)
+        core.openSummary(game, mon)
       end }
       rows[#rows + 1] = { label = "RELEASE", onSelect = function() releaseCurrent(idx, mon) end }
       rows[#rows + 1] = { label = "CANCEL" }
-      local th = #rows * 2 + 2
-      game.stack:push(Menu.new(game, rows, { tx = 9, ty = math.max(0, 18 - th), tw = 11, th = th, noSound = true }))
+      core.rowActionsMenu(game, rows)
     end
 
-    rebuild = function()
+    rebuild = function(preserveCursor)
+      local oldIndex = preserveCursor and list and list.index
       core.clampBoxState(state, loadStorage, Boxes.COUNT)
       local src = currentList()
       local rows = {}
-      for i, mon in ipairs(src) do
-        rows[#rows + 1] = { label = monName(game, mon), value = i }
-      end
+      for i, mon in ipairs(src) do rows[#rows + 1] = { label = monName(game, mon), value = i } end
       list = ListMenu.new(game, viewTitle(), rows, {
         noSound = true,
-        rows = 6,
+        messageBox = true,
         wrap = true,
         onChoose = function(item)
           if state.pendingSwap then
@@ -1093,37 +1264,33 @@ function Module.install(mod, core)
           openMonActions(mon, item.value)
         end,
       })
-      attachLevelIcons(list, src)
-      list.footer = "\nSELECT: " .. nextViewName()
+      if oldIndex then core.setListCursor(list, oldIndex) end
+      core.attachLevelIcons(list, src)
       local pending = state.pendingSwap
       if pending and pending.view == state.view then
-        local sameBox = state.view == "party"
-          or (state.view == "bank" and pending.box == state.bankBox)
-          or (state.view == "pc" and pending.box == state.pcBox)
+        local sameBox = state.view == "party" or (state.view == "bank" and pending.box == state.bankBox) or (state.view == "pc" and pending.box == state.pcBox)
         if sameBox then list.swapIndex = pending.index end
         list.footer = "Choose a POKéMON\nto switch with."
-      end
-    end
-
-    -- Shared by screen:update's own "b" handling and the Gen1 Modern UI adapter's "back" action below.
-    backHandler = function()
-      if state.pendingSwap then
-        state.pendingSwap = nil
-        rebuild()
       else
-        game.stack:pop()
+        core.attachDynamicFooter(list, function(l)
+          local mon = src[l.index]
+          local str = state.view == "party" and "%s\nSELECT: %s" or "%s\nSEL: %s ST: BOX"
+          return Strings(str, mon and Pokemon.speciesName(game, mon) or "", nextViewName())
+        end)
       end
     end
 
-    -- Whatever pressing A on the highlighted row would do -- list.onChoose already branches on state.pendingSwap itself, so this is the one thing the Gen1 Modern UI "select" action needs to reuse.
-    chooseCurrent = function()
-      core.chooseListCurrent(list, function() game.stack:pop() end)
-    end
+    backHandler = core.pendingSwapBackHandler(state, rebuild, function() game.stack:pop() end)
+
+    chooseCurrent = function() core.chooseListCurrent(list, function() game.stack:pop() end) end
 
     function screen:update(dt)
       local input = game.input
       if input:wasPressed("select") then
         cycleView()
+        return
+      elseif input:wasPressed("start") then
+        if not state.pendingSwap then openBoxOptionsMenu() end
         return
       elseif input:wasPressed("left") then
         cycleBox(-1)
@@ -1140,14 +1307,14 @@ function Module.install(mod, core)
 
     function screen:draw()
       list:draw()
-      local total = #list.items
-      local text = Strings("%d/%d", total > 0 and list.index or 0, total)
-      love.graphics.setColor(0, 0, 0, 1)
-      Font.draw(text, 160 - 8 - Font.width(text), 4)
-      love.graphics.setColor(1, 1, 1, 1)
+      core.drawListTitle(list)
+      if state.view ~= "party" then
+        local current = state.view == "bank" and loadStorage().currentBox or (game.save.currentBox or 1)
+        if current == currentBoxNumForView() then drawCurrentBoxTitleMark(list) end
+      end
+      core.drawListCounter(list)
     end
 
-    -- Gen1 Modern UI compatibility surface -- see the TRANSFER BOX screen above (openTransferBoxList) for the full explanation.
     screen.screenId = MOVE_SCREEN_ID
     screen.gen1ModernUi = core.gen1ModernUiListAdapter(function() return list end, {
       title = function() return viewTitle() end,
@@ -1162,35 +1329,31 @@ function Module.install(mod, core)
     })
 
     rebuild()
-    game.stack:push(screen)
+    return screen
   end
 
-  -- WITHDRAW / DEPOSIT / RELEASE / MOVE / TRANSFER BOX / CHANGE BOX / CANCEL, keepOpen so each sub-list leaves this menu underneath it.
-  local function BankBoxMenu(game)
-    local rows = {
-      { label = "MOVE <PK><MN>", keepOpen = true, onSelect = function() openMoveList(game) end },
-      { label = "WITHDRAW <PK><MN>", keepOpen = true, onSelect = function() openWithdrawList(game) end },
-      { label = "DEPOSIT <PK><MN>", keepOpen = true, onSelect = function() openDepositList(game) end },
-      { label = "RELEASE <PK><MN>", keepOpen = true, onSelect = function() openReleaseList(game) end },
-      { label = "TRANSFER BOX", keepOpen = true, onSelect = function() openTransferBoxList(game) end },
-      { label = "CHANGE BOX", keepOpen = true, onSelect = function() openChangeBoxList(game) end },
-      { label = "CANCEL" },
-    }
-    local th = #rows * 2 + 2
-    return Menu.new(game, rows, { tx = 0, ty = 0, tw = 14, th = th, noSound = true })
+  local TimeCapsuleScreenId = V.require("TimeCapsule").screenId
+
+  local function BankPokemonMenu(game)
+    local rows = {}
+    local function addRow(label, build) rows[#rows + 1] = { label = label, build = build } end
+    local mode = mod.options:get("storage_mode")
+    if mode ~= "time_capsule" then addRow("MANAGE <PK><MN>", openMoveList) end
+    if mode == "both" then addRow("MANAGE BOX", openManageBoxList) end
+    if mode ~= "bank" then addRow("TIME CAPSULE", function(g) return require("src.ui.Screens").build(g, TimeCapsuleScreenId) end) end
+    return core.rowChooserScreen(game, rows, { tw = 14 })
   end
 
-  mod.content.screens:register(SCREEN_ID, { new = BankBoxMenu })
+  mod.content.screens:register(SCREEN_ID, { new = BankPokemonMenu })
 
   local pokemonTab = core.makeTabToggle("show_pokemon_tab")
-  local tabEnabled = pokemonTab.enabled
+  Pokemon.tabEnabled = pokemonTab.enabled
 
   -- =========================================================================
   -- Public API for other mods. See API.md for the full reference.
   -- =========================================================================
   mod.exports.boxCount = boxCount
-  mod.exports.boxCapacity = function() return BOX_CAPACITY end
-
+  mod.exports.boxCapacity = boxCapacity
   mod.exports.depositPokemon = function(mon, opts)
     if type(mon) ~= "table" then return nil, "invalid pokemon" end
     opts = opts or {}
@@ -1198,13 +1361,14 @@ function Module.install(mod, core)
       ensureStats(opts.game, mon)
       autoHealMon("deposit", opts.game, mon)
     end
-    local boxNum, slot = depositMon(mon)
+    local boxNum, slot = Pokemon.depositMon(mon)
     mod.events:emit("mod.vrm_pokemon_bank.pokemon_deposited", { box = boxNum, index = slot, mon = mon })
     return boxNum, slot
   end
-
-  mod.exports.withdrawPokemon = function(boxNum, index, game)
-    local mon = withdrawMon(boxNum, index)
+  mod.exports.withdrawPokemon = function(boxNum, index, game, fix)
+    local ok, reason = withdrawEligible(peekMon(boxNum, index), game, fix)
+    if not ok then return nil, reason end
+    local mon = Pokemon.withdrawMon(boxNum, index)
     if mon then
       if game then
         reshapeForActiveGame(game, mon)
@@ -1216,42 +1380,35 @@ function Module.install(mod, core)
     end
     return mon
   end
-
   mod.exports.getPokemon = peekMon
-
   mod.exports.getBox = function(boxNum)
     local s = loadStorage()
     local box = s.boxes[boxNum]
     if not box then return nil end
+    local cap = boxCapacity()
+    local slots = cap == math.huge and #box or cap
     local copy = {}
-    for i = 1, BOX_CAPACITY do copy[i] = box[i] end
+    for i = 1, slots do copy[i] = box[i] end
     return copy
   end
-
   mod.exports.movePokemon = moveMon
-
   mod.exports.releasePokemon = function(boxNum, index)
-    local mon = withdrawMon(boxNum, index)
-    if mon then
-      mod.events:emit("mod.vrm_pokemon_bank.pokemon_released", { box = boxNum, index = index, mon = mon })
-    end
+    local mon = Pokemon.withdrawMon(boxNum, index)
+    if mon then mod.events:emit("mod.vrm_pokemon_bank.pokemon_released", { box = boxNum, index = index, mon = mon }) end
     return mon ~= nil
   end
-
   mod.exports.listPokemon = listMons
   mod.exports.pokemonCount = countMons
-
   mod.exports.healBank = healBank
-
-  mod.exports.isValidPokemon = function(mon, game)
-    return isValidPokemon(mon, game and game.data)
-  end
-  mod.exports.validatePokemonStorage = validateStorage
-
+  mod.exports.isValidPokemon = function(mon, game) return isValidPokemon(mon, game and game.data) end
+  mod.exports.validatePokemonStorage = Pokemon.validateStorage
+  mod.exports.isLegal = isLegal
+  mod.exports.tryFixLegality = fixLegal
+  mod.exports.needsLegalityFix = needsLegalityFix
   mod.exports.reshapeForActiveGame = reshapeForActiveGame
+  mod.exports.registerDex = registerDex
   mod.exports.reshapeMoves = reshapeMoves
   mod.exports.reshapeStatus = reshapeStatus
-
   mod.exports.listInvalidPokemon = listInvalidMons
   mod.exports.invalidPokemonCount = invalidMonCount
 
@@ -1268,12 +1425,15 @@ function Module.install(mod, core)
     return t
   end
 
-  -- Shared by every bulk deposit/withdraw export below: collects the mons at `indices` off `source`, in the caller's own order, then asks `place(mon, originalIdx)` to move each one into its destination. `place` returns a result table on success or nil to leave that mon where it is (a full destination); every mon `place` accepted is then removed from `source`, in descending index order so an earlier removal never shifts a later one. Returns the successful results and how many entries were left behind.
+  local function firstNonEmptyBox(s)
+    local boxNum = 1
+    while boxNum <= #s.boxes and #s.boxes[boxNum] == 0 do boxNum = boxNum + 1 end
+    return boxNum <= #s.boxes and boxNum or nil
+  end
+
   local function bulkTransfer(source, indices, place)
     local entries = {}
-    for _, idx in ipairs(indices) do
-      entries[#entries + 1] = { mon = source[idx], originalIdx = idx }
-    end
+    for _, idx in ipairs(indices) do entries[#entries + 1] = { mon = source[idx], originalIdx = idx } end
     local results, removedIdx = {}, {}
     for _, entry in ipairs(entries) do
       local result = place(entry.mon, entry.originalIdx)
@@ -1287,22 +1447,21 @@ function Module.install(mod, core)
     return results, #entries - #results
   end
 
-  -- Builds a bulkTransfer `place` callback that deposits each mon into the Bank's own boxes, searching from `startBoxNum` and continuing wherever the last mon actually landed -- shared by depositPartyPokemon and depositBoxPokemon, the only two bulk paths that deposit INTO the Bank.
   local function depositPlacer(game, s, startBoxNum)
     local currentBoxNum = startBoxNum
     return function(mon)
       if game then ensureStats(game, mon) end
       autoHealMon("deposit", game, mon)
       stampOrigin(mon)
+      local cap = boxCapacity()
       for off = 0, #s.boxes - 1 do
         local boxNum = ((currentBoxNum - 1 + off) % #s.boxes) + 1
-        if #s.boxes[boxNum] < BOX_CAPACITY then
+        if #s.boxes[boxNum] < cap then
           table.insert(s.boxes[boxNum], mon)
           currentBoxNum = boxNum
           return { box = boxNum, index = #s.boxes[boxNum], mon = mon }
         end
       end
-      -- Should not happen due to normalizeBoxes guarantee, but handle gracefully
       s.boxes[#s.boxes + 1] = {}
       table.insert(s.boxes[#s.boxes], mon)
       currentBoxNum = #s.boxes
@@ -1310,107 +1469,63 @@ function Module.install(mod, core)
     end
   end
 
-  -- Bulk deposit from party
   mod.exports.depositPartyPokemon = function(game, opts)
     opts = opts or {}
-    local targetBoxNum = opts.boxNum -- nil = last box
-    local indices = opts.indices -- nil = 2..last (keep first)
-
-    if not game or not game.save or not game.save.party then
-      return nil, "invalid game"
-    end
-
+    local targetBoxNum = opts.boxNum
+    local indices = opts.indices
+    if not game or not game.save or not game.save.party then return nil, "invalid game" end
     local party = game.save.party
-    if #party < 2 then
-      return nil, "need at least 2 pokemon in party"
-    end
-
-    -- Default indices: keep first, deposit rest
+    if #party < 2 then return nil, "need at least 2 pokemon in party" end
     if not indices then
       indices = {}
       for i = 2, #party do indices[#indices + 1] = i end
     end
     if not validIndices(indices, #party) then return nil, "invalid index" end
-    if #party - #indices < 1 then
-      return nil, "must keep at least 1 pokemon in party"
-    end
-
+    if #party - #indices < 1 then return nil, "must keep at least 1 pokemon in party" end
     local s = loadStorage()
     local deposited = bulkTransfer(party, indices, depositPlacer(game, s, targetBoxNum or #s.boxes))
-
     normalizeBoxes(s)
     markDirty()
-
-    for _, entry in ipairs(deposited) do
-      mod.events:emit("mod.vrm_pokemon_bank.pokemon_deposited", entry)
-    end
-
+    for _, entry in ipairs(deposited) do mod.events:emit("mod.vrm_pokemon_bank.pokemon_deposited", entry) end
     return deposited
   end
-
-  -- Bulk deposit from PC box
   mod.exports.depositBoxPokemon = function(game, pcBoxNum, opts)
     opts = opts or {}
     local targetBoxNum = opts.boxNum
     local indices = opts.indices
-    if not game or not game.save or not game.save.boxes then
-      return nil, "invalid game"
-    end
+    if not game or not game.save or not game.save.boxes then return nil, "invalid game" end
     local Boxes = require("src.pokemon.Boxes")
     Boxes.ensure(game.save)
     local pcBox = game.save.boxes[pcBoxNum]
     if not pcBox then return nil, "invalid pc box" end
     if #pcBox == 0 then return nil, "pc box is empty" end
-
     indices = indices or allIndices(#pcBox)
     if not validIndices(indices, #pcBox) then return nil, "invalid index" end
-
     local s = loadStorage()
     local deposited = bulkTransfer(pcBox, indices, depositPlacer(game, s, targetBoxNum or #s.boxes))
-
     normalizeBoxes(s)
     markDirty()
-
-    for _, entry in ipairs(deposited) do
-      mod.events:emit("mod.vrm_pokemon_bank.pokemon_deposited", entry)
-    end
-
+    for _, entry in ipairs(deposited) do mod.events:emit("mod.vrm_pokemon_bank.pokemon_deposited", entry) end
     return deposited
   end
-
-  -- Bulk withdraw to party
   mod.exports.withdrawToParty = function(game, opts)
     opts = opts or {}
-    local sourceBoxNum = opts.boxNum -- nil = first non-empty box
-    local indices = opts.indices -- nil = all
-
-    if not game or not game.save or not game.save.party then
-      return nil, "invalid game"
-    end
-
+    local sourceBoxNum = opts.boxNum
+    local indices = opts.indices
+    if not game or not game.save or not game.save.party then return nil, "invalid game" end
     local party = game.save.party
     local s = loadStorage()
-
-    -- Default source box: first non-empty box
-    if not sourceBoxNum then
-      sourceBoxNum = 1
-      while sourceBoxNum <= #s.boxes and #s.boxes[sourceBoxNum] == 0 do
-        sourceBoxNum = sourceBoxNum + 1
-      end
-      if sourceBoxNum > #s.boxes then return nil, "bank is empty" end
-    end
-
+    sourceBoxNum = sourceBoxNum or firstNonEmptyBox(s)
+    if not sourceBoxNum then return nil, "bank is empty" end
     local sourceBox = s.boxes[sourceBoxNum]
     if not sourceBox then return nil, "invalid bank box" end
     if #sourceBox == 0 then return nil, "bank box is empty" end
-
     indices = indices or allIndices(#sourceBox)
     if not validIndices(indices, #sourceBox) then return nil, "invalid index" end
-
     if Party.MAX - #party <= 0 then return nil, "party is full" end
-
     local withdrawn, remainingCount = bulkTransfer(sourceBox, indices, function(mon, originalIdx)
       if #party >= Party.MAX then return nil end
+      if not withdrawEligible(mon, game, opts.fix) then return nil end
       reshapeForActiveGame(game, mon)
       stampNewTrainer(game, mon)
       autoHealMon("withdraw", game, mon)
@@ -1419,18 +1534,14 @@ function Module.install(mod, core)
       mod.events:emit("mod.vrm_pokemon_bank.pokemon_withdrawn", { box = sourceBoxNum, index = originalIdx, mon = mon })
       return { mon = mon }
     end)
-
     normalizeBoxes(s)
     markDirty()
-
     return { withdrawn = withdrawn, remaining = remainingCount }
   end
-
-  -- Bulk withdraw to PC box
   mod.exports.withdrawToBox = function(game, targetPcBoxNum, opts)
     opts = opts or {}
-    local sourceBoxNum = opts.boxNum -- nil = first non-empty box
-    local indices = opts.indices -- nil = all
+    local sourceBoxNum = opts.boxNum
+    local indices = opts.indices
     if not game or not game.save or not game.save.boxes then
       return nil, "invalid game"
     end
@@ -1438,24 +1549,16 @@ function Module.install(mod, core)
     Boxes.ensure(game.save)
     if not game.save.boxes[targetPcBoxNum] then return nil, "invalid target pc box" end
     local s = loadStorage()
-    -- Default source box: first non-empty box
-    if not sourceBoxNum then
-      sourceBoxNum = 1
-      while sourceBoxNum <= #s.boxes and #s.boxes[sourceBoxNum] == 0 do
-        sourceBoxNum = sourceBoxNum + 1
-      end
-      if sourceBoxNum > #s.boxes then return nil, "bank is empty" end
-    end
+    sourceBoxNum = sourceBoxNum or firstNonEmptyBox(s)
+    if not sourceBoxNum then return nil, "bank is empty" end
     local sourceBox = s.boxes[sourceBoxNum]
     if not sourceBox then return nil, "invalid bank box" end
     if #sourceBox == 0 then return nil, "bank box is empty" end
-
     indices = indices or allIndices(#sourceBox)
     if not validIndices(indices, #sourceBox) then return nil, "invalid index" end
-
     local currentPcBoxNum = targetPcBoxNum
     local withdrawn, remainingCount = bulkTransfer(sourceBox, indices, function(mon, originalIdx)
-      -- Try to place in current or subsequent PC boxes
+      if not withdrawEligible(mon, game, opts.fix) then return nil end
       for off = 0, Boxes.COUNT - 1 do
         local boxNum = ((currentPcBoxNum - 1 + off) % Boxes.COUNT) + 1
         local box = game.save.boxes[boxNum]
@@ -1472,28 +1575,15 @@ function Module.install(mod, core)
       end
       return nil
     end)
-
     normalizeBoxes(s)
     markDirty()
     return { withdrawn = withdrawn, remaining = remainingCount }
   end
-
   mod.exports.pokemonScreenId = SCREEN_ID
-
   mod.exports.setPokemonTabEnabled = pokemonTab.setEnabled
-  mod.exports.isPokemonTabEnabled = tabEnabled
-
+  mod.exports.isPokemonTabEnabled = Pokemon.tabEnabled
   mod.log:info("Pokemon Bank: Pokemon tab ready")
-
-  return {
-    screenId = SCREEN_ID,
-    transferBoxScreenId = TRANSFER_BOX_SCREEN_ID,
-    moveScreenId = MOVE_SCREEN_ID,
-    tabEnabled = tabEnabled,
-    validateStorage = validateStorage,
-    withdrawMon = withdrawMon,
-    depositMon = depositMon,
-  }
+  return Pokemon
 end
 
 return Module
