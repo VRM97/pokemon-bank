@@ -2,6 +2,7 @@ local V = ...
 
 local GameVersion = require("src.core.GameVersion")
 local Strings = require("src.core.Strings")
+local Utils = V.require("Utils")
 
 local STORAGE_VERSION = 5
 local PC_BOX_NAMES_KEY = "boxNames"
@@ -26,7 +27,7 @@ function Module.install(mod, File)
 
   function Storage.ensureStorageId(s)
     if type(s.storageId) == "number" then return false end
-    s.storageId = love.math.random(1, 999999999)
+    s.storageId = Utils.generateId()
     return true
   end
 

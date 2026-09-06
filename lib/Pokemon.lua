@@ -16,6 +16,7 @@ local Module = {}
 function Module.install(mod, core)
   local ListMenu = mod.ui.ListMenu
   local GenerationMap = V.require("GenerationMap")
+  local Utils = V.require("Utils")
   local loadStorage = core.loadStorage
   local markDirty = core.markDirty
   local normalizeBoxes = core.normalizeBoxes
@@ -335,11 +336,7 @@ function Module.install(mod, core)
 
   local function assignBankId(s, mon)
     if type(mon) ~= "table" or mon.bankId ~= nil then return false end
-    local id
-    repeat
-      id = love.math.random(1, 999999999)
-    until not bankIdTaken(s, id)
-    mon.bankId = id
+    mon.bankId = Utils.generateId(function(id) return bankIdTaken(s, id) end)
     return true
   end
 
