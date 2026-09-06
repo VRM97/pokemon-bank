@@ -135,7 +135,7 @@ return function(mod)
         end,
       }
     end
-    rows[#rows + 1] = { label = "CANCEL" }
+    rows[#rows + 1] = { label = "CANCEL", onSelect = function() game.stack:pop() end }
     local popup = Menu.new(game, rows, { tx = 0, ty = 0, tw = 10, th = #rows * 2 + 2, noSound = true })
     popup.index = currentIndex
     popup:clampScroll()
