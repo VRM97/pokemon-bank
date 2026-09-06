@@ -121,6 +121,8 @@ DELETE DATA\*|Erases the Bank entirely and asks **twice** first, since it can't 
 
 *\* Takes effect on disk immediately.*
 
+A mod built on top of the Bank can add its own row to this same page (opening its own options list, same look, rather than merging its rows into the ones above) through `registerOptionsPanel` -- see [API.md](./API.md).
+
 ## Where the data lives
 
 `bank/storage.lua`, written next to `saves` directory. It is never written into, or read from, `save.modData`, so no save slot carries a copy of it and no save can overwrite it.

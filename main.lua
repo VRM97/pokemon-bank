@@ -81,45 +81,49 @@ return function(mod)
     end, { defaultNo = true })
   end
 
-  local function setModOption(game, schema, value)
+  local function getModOption(game, targetId, schema)
+    local stored = game.mods and game.mods.modOptions and game.mods.modOptions[targetId]
+    if stored ~= nil and stored[schema.key] ~= nil then return stored[schema.key] end
+    return schema.default
+  end
+
+  local function setModOptionFor(game, targetId, schema, value)
     local save = game.save
     if save and save.options then
       save.options.modOptions = save.options.modOptions or {}
       local t = save.options.modOptions
-      t[mod.id] = t[mod.id] or {}
-      t[mod.id][schema.key] = value
+      t[targetId] = t[targetId] or {}
+      t[targetId][schema.key] = value
     end
     local loader = game.mods
     if loader then
       loader.modOptions = loader.modOptions or {}
-      loader.modOptions[mod.id] = loader.modOptions[mod.id] or {}
-      loader.modOptions[mod.id][schema.key] = value
-      if loader.events then
-        loader.events:emit("mod.options_changed", { mod = mod.id, key = schema.key, value = value })
-      end
+      loader.modOptions[targetId] = loader.modOptions[targetId] or {}
+      loader.modOptions[targetId][schema.key] = value
+      if loader.events then loader.events:emit("mod.options_changed", { mod = targetId, key = schema.key, value = value }) end
     end
     if game.writeOptions then pcall(game.writeOptions, game) end
   end
 
-  local function cycleOptionValue(game, schema)
+  local function cycleOptionValue(game, targetId, schema)
     if schema.type == "toggle" then
-      setModOption(game, schema, not mod.options:get(schema.key))
+      setModOptionFor(game, targetId, schema, not getModOption(game, targetId, schema))
       return
     end
     local choices = schema.choices or {}
     if #choices == 0 then return end
-    local cur = mod.options:get(schema.key)
+    local cur = getModOption(game, targetId, schema)
     local index = 1
     for i, choice in ipairs(choices) do
       if choice[2] == cur then index = i break end
     end
     index = (index % #choices) + 1
-    setModOption(game, schema, choices[index][2])
+    setModOptionFor(game, targetId, schema, choices[index][2])
   end
 
-  local function openOptionChoicePopup(game, menu, schema, rebuildItems)
+  local function openOptionChoicePopup(game, targetId, menu, schema, rebuildItems)
     local choices = schema.choices or {}
-    local cur = mod.options:get(schema.key)
+    local cur = getModOption(game, targetId, schema)
     local currentIndex = 1
     local rows = {}
     for i, choice in ipairs(choices) do
@@ -127,7 +131,7 @@ return function(mod)
       rows[#rows + 1] = {
         label = choice[1],
         onSelect = function()
-          setModOption(game, schema, choice[2])
+          setModOptionFor(game, targetId, schema, choice[2])
           local index = menu.index
           menu.items = rebuildItems()
           menu.index = index
@@ -142,49 +146,93 @@ return function(mod)
     game.stack:push(popup)
   end
 
-  local function buildOptionRows()
-    local function optionValueText(schema)
-      if schema.type == "toggle" then return mod.options:get(schema.key) and "ON", schema.onHint or "OFF", schema.offHint end
-      local cur = mod.options:get(schema.key)
-      for _, choice in ipairs(schema.choices or {}) do
+  local function openNumberPrompt(game, targetId, menu, schema, rebuildItems)
+    local QuantityBox = require("src.ui.QuantityBox")
+    local function clamp(v)
+      if schema.min then v = math.max(schema.min, v) end
+      if schema.max then v = math.min(schema.max, v) end
+      return v
+    end
+    local cur = tonumber(getModOption(game, targetId, schema)) or 0
+    game.stack:push(QuantityBox.new(game, {
+      max = schema.max or 99,
+      start = math.max(1, cur),
+      onDone = function(qty)
+        if not qty then return end
+        setModOptionFor(game, targetId, schema, clamp(qty))
+        local index = menu.index
+        menu.items = rebuildItems()
+        menu.index = index
+        menu.footer = nil
+      end,
+    }))
+  end
+
+  local function openTextPrompt(game, targetId, menu, schema, rebuildItems)
+    local NamingScreen = require("src.ui.NamingScreen")
+    game.stack:push(NamingScreen.new(game, {
+      title = (schema.label or schema.key) .. "?",
+      maxLen = schema.maxLen or 7,
+      default = getModOption(game, targetId, schema),
+      onDone = function(name)
+        setModOptionFor(game, targetId, schema, name)
+        local index = menu.index
+        menu.items = rebuildItems()
+        menu.index = index
+        menu.footer = nil
+      end,
+    }))
+  end
+
+  local function buildOptionRows(game, targetId, schema)
+    local function optionValueText(row)
+      if row.type == "toggle" then
+        if getModOption(game, targetId, row) then return "ON", row.onHint end
+        return "OFF", row.offHint
+      end
+      if row.type == "number" then return tostring(getModOption(game, targetId, row) or 0) end
+      if row.type == "text" then return tostring(getModOption(game, targetId, row) or "") end
+      local cur = getModOption(game, targetId, row)
+      for _, choice in ipairs(row.choices or {}) do
         if choice[2] == cur then return choice[1], choice[3] end
       end
-      local first = (schema.choices or {})[1]
-      return first and first[1], first[3] or "---"
+      local first = (row.choices or {})[1]
+      if first then return first[1], first[3] or "---" end
+      return "---", nil
     end
 
     local rows = {}
-    for _, schema in ipairs(OPTION_SCHEMA) do
-      if schema.type == "toggle" or schema.type == "choice" then
-        local text, description = optionValueText(schema)
-        rows[#rows + 1] = { label = Utils.truncateName(schema.label), right = Utils.truncateName(text, 4), description = description, schema = schema }
+    for _, row in ipairs(schema) do
+      if row.type == "toggle" or row.type == "choice" or row.type == "number" or row.type == "text" then
+        local text, description = optionValueText(row)
+        rows[#rows + 1] = { label = Utils.truncateName(row.label), right = Utils.truncateName(text, 4), description = description, schema = row }
       end
     end
     return rows
   end
 
-  mod.content.screens:register(SCREEN_ID, {
-    new = function(game)
+  local function buildOptionsListScreen(game, targetId, schema, title, extraRows)
       local list
       local function rebuildItems()
-        local items = buildOptionRows()
-        local function appendRow(label, onSelect, description) items[#items + 1] = { label = label, onSelect = onSelect, description = description } end
-        appendRow("VIEW STATS", function() mod.ui.push(game, Stats.screenId) end, "See deposit and\nwithdraw totals.")
-        appendRow("VIEW LOST", function() mod.ui.push(game, Lost.screenId) end, "Browse what's\nquarantined.")
-        appendRow("RESTORE DATA", function() confirmRestoreBank(game) end, "Roll the Bank back\nto its backup.")
-        appendRow("DELETE DATA", function() confirmDeleteBank(game) end, "Erase ALL Bank\ndata for good.")
-        appendRow("CANCEL", nil, "Close this menu.")
+      local items = buildOptionRows(game, targetId, schema)
+      for _, row in ipairs(extraRows or {}) do items[#items + 1] = row end
+      items[#items + 1] = { label = "CANCEL", description = "Close this menu." }
         return items
       end
-      list = mod.ui.ListMenu.new(game, PC_MENU_LABEL, rebuildItems(), {
+    list = mod.ui.ListMenu.new(game, title, rebuildItems(), {
         rows = 6, wrap = true,
         onChoose = function(item, menu)
           if not item then return end
           if item.schema then
-            if item.schema.type == "choice" and #(item.schema.choices or {}) > 2 then
-              openOptionChoicePopup(game, menu, item.schema, rebuildItems)
-            else
-              cycleOptionValue(game, item.schema)
+          local schemaType = item.schema.type
+          if schemaType == "choice" and #(item.schema.choices or {}) > 2 then
+            openOptionChoicePopup(game, targetId, menu, item.schema, rebuildItems)
+          elseif schemaType == "number" then
+            openNumberPrompt(game, targetId, menu, item.schema, rebuildItems)
+          elseif schemaType == "text" then
+            openTextPrompt(game, targetId, menu, item.schema, rebuildItems)
+          else
+            cycleOptionValue(game, targetId, item.schema)
               local index = menu.index
               menu.items = rebuildItems()
               menu.index = index
@@ -200,6 +248,48 @@ return function(mod)
         return item and item.description or nil
       end)
       return list
+  end
+
+  local panels = {}
+  local panelIndex = {}
+
+  local function registerOptionsPanel(panel)
+    if type(panel) ~= "table" then return false, "panel must be a table" end
+    if type(panel.id) ~= "string" or panel.id == "" then return false, "panel.id is required" end
+    if type(panel.label) ~= "string" or panel.label == "" then return false, "panel.label is required" end
+    if type(panel.schema) ~= "table" then return false, "panel.schema is required" end
+    local entry = { id = panel.id, label = panel.label, description = panel.description, schema = panel.schema }
+    local existing = panelIndex[panel.id]
+    if existing then
+      panels[existing] = entry
+    else
+      panels[#panels + 1] = entry
+      panelIndex[panel.id] = #panels
+    end
+    return true
+  end
+
+  local function unregisterOptionsPanel(id)
+    local index = panelIndex[id]
+    if not index then return false end
+    table.remove(panels, index)
+    panelIndex[id] = nil
+    for i = index, #panels do panelIndex[panels[i].id] = i end
+    return true
+  end
+
+  mod.content.screens:register(SCREEN_ID, {
+    new = function(game)
+      local extraRows = {}
+      local function appendRow(label, onSelect, description) extraRows[#extraRows + 1] = { label = label, onSelect = onSelect, description = description } end
+      appendRow("VIEW STATS", function() mod.ui.push(game, Stats.screenId) end, "See deposit and\nwithdraw totals.")
+      appendRow("VIEW LOST", function() mod.ui.push(game, Lost.screenId) end, "Browse what's\nquarantined.")
+      for _, panel in ipairs(panels) do
+        appendRow(panel.label, function() game.stack:push(buildOptionsListScreen(game, panel.id, panel.schema, panel.label)) end, panel.description)
+      end
+      appendRow("RESTORE DATA", function() confirmRestoreBank(game) end, "Roll the Bank back\nto its backup.")
+      appendRow("DELETE DATA", function() confirmDeleteBank(game) end, "Erase ALL Bank\ndata for good.")
+      return buildOptionsListScreen(game, mod.id, OPTION_SCHEMA, PC_MENU_LABEL, extraRows)
     end,
   })
   
@@ -452,6 +542,34 @@ return function(mod)
     end)
   end
 
+  local menuActions = {}
+  local menuActionIndex = {}
+
+  local function registerBankMenuAction(action)
+    if type(action) ~= "table" then return false, "action must be a table" end
+    if type(action.id) ~= "string" or action.id == "" then return false, "action.id is required" end
+    if type(action.label) ~= "string" or action.label == "" then return false, "action.label is required" end
+    if type(action.onSelect) ~= "function" then return false, "action.onSelect is required" end
+    local entry = { id = action.id, label = action.label, onSelect = action.onSelect }
+    local existing = menuActionIndex[action.id]
+    if existing then
+      menuActions[existing] = entry
+    else
+      menuActions[#menuActions + 1] = entry
+      menuActionIndex[action.id] = #menuActions
+    end
+    return true
+  end
+
+  local function unregisterBankMenuAction(id)
+    local index = menuActionIndex[id]
+    if not index then return false end
+    table.remove(menuActions, index)
+    menuActionIndex[id] = nil
+    for i = index, #menuActions do menuActionIndex[menuActions[i].id] = i end
+    return true
+  end
+
   local function openBankMenu(game)
     local rows = {}
     local function appendRow(label, onSelect) rows[#rows + 1] = { label = label, keepOpen = true, onSelect = onSelect } end
@@ -461,6 +579,7 @@ return function(mod)
     if movesOn then appendRow("MOVES", function() mod.ui.push(game, Moves.screenId) end) end
     if moneyOn then appendRow("MONEY", function() mod.ui.push(game, Money.screenId) end) end
     if linkOn then appendRow("LINK", function() confirmLinkSave(game) end) end
+    for _, action in ipairs(menuActions) do appendRow(action.label, function() action.onSelect(game) end) end
     if #rows == 0 then return false end
     if #rows == 1 then
       rows[1].onSelect()
@@ -483,7 +602,7 @@ return function(mod)
     if type(out) ~= "table" then return out end
     if GameVersion.generation() == 2 then return out end
     if not pcEntryEnabled() then return out end
-    if not (Pokemon.tabEnabled() or Items.tabEnabled() or Moves.tabEnabled() or Money.tabEnabled()) then return out end
+    if not (Pokemon.tabEnabled() or Items.tabEnabled() or Moves.tabEnabled() or Money.tabEnabled() or #menuActions > 0) then return out end
     local row = {
       label = PC_MENU_LABEL,
       keepOpen = true,
@@ -521,7 +640,7 @@ return function(mod)
       CenterPcMenu.buildEntries = function(self)
         origBuildEntries(self)
         if not pcEntryEnabled() then return end
-        if not (Pokemon.tabEnabled() or Items.tabEnabled() or Moves.tabEnabled() or Money.tabEnabled()) then return end
+        if not (Pokemon.tabEnabled() or Items.tabEnabled() or Moves.tabEnabled() or Money.tabEnabled() or #menuActions > 0) then return end
         local entries = self.entries
         local row = { id = ROW_ID, label = PC_MENU_LABEL }
         local position = pcMenuPosition()
@@ -647,5 +766,9 @@ return function(mod)
     Stats.flush()
     return was
   end
+  mod.exports.registerOptionsPanel = registerOptionsPanel
+  mod.exports.unregisterOptionsPanel = unregisterOptionsPanel
+  mod.exports.registerBankMenuAction = registerBankMenuAction
+  mod.exports.unregisterBankMenuAction = unregisterBankMenuAction
   mod.log:info("Pokemon Bank loaded")
 end
