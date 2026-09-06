@@ -116,7 +116,7 @@ function Module.install(mod, core)
 
   local function mirrorEggFields(mon)
     if type(mon) ~= "table" or mon.isEgg ~= true then return end
-    local crystal251 = mod.find and mod.find("CRYSTAL_251")
+    local crystal251 = mod.find("CRYSTAL_251")
     if mon.eggSteps ~= nil or mon.eggCycles ~= nil then
       local cycles = math.min(mon.eggSteps or mon.eggCycles, mon.eggCycles or mon.eggSteps)
       if GameVersion.generation() == 2 then
@@ -222,7 +222,7 @@ function Module.install(mod, core)
         mon.stats.special = Stats.calc(def, mon.level or 1, mon.dvs or {}, mon.statExp).special
       end
       if mon.catchRate == nil then mon.catchRate = def.catchRate end
-      if mod.find and mod.find("CRYSTAL_251") then
+      if mod.find("CRYSTAL_251") then
         if mon.happiness == nil then mon.happiness = 70 end
         if mon.pokerus == nil then mon.pokerus = 0 end
       end
@@ -290,7 +290,7 @@ function Module.install(mod, core)
       if not pokemon[translated] then return false end
       mon.species = translated
     end
-    if mon.isEgg and GameVersion.generation() == 1 and not (mod.find and mod.find("CRYSTAL_251")) then
+    if mon.isEgg and GameVersion.generation() == 1 and not mod.find("CRYSTAL_251") then
       return false
     end
     return true

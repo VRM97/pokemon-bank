@@ -271,8 +271,8 @@ function Module.install(mod, core)
       end)
   end
 
-  local function reusableMachinesActive()
-    return mod.find and mod.find("reusable_machines") ~= nil
+  local function spendMoveUses()
+    return not mod.find("infinite_tms") and not mod.find("reusable_machines") and not mod.find("reusable_machines_gen2")
   end
 
   local function openTeachTargetList(game, moveId, onTaught)
@@ -289,7 +289,7 @@ function Module.install(mod, core)
           handle.setFooter(msg)
           return
         end
-        if not reusableMachinesActive() then
+        if spendMoveUses() then
           core.bucketSub(loadStorage().moves, moveId, 1)
           markDirty()
         end

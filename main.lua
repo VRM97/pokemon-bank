@@ -459,7 +459,7 @@ return function(mod)
 
   mod.exports.validateStorage = validateStorage
 
-  local modernUi = mod.find and mod.find("gen2_clean_ui") or mod.find and mod.find("gen1_modern_ui")
+  local modernUi = mod.find("gen2_clean_ui") or mod.find("gen1_modern_ui")
   if (modernUi and modernUi.exports and type(modernUi.exports.registerAdapter) == "function") then
 
     local function externalScreen(id, capabilities)

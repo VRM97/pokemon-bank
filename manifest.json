@@ -18,7 +18,9 @@
   "dependencies": [],
   "optional_dependencies": [
     "CRYSTAL_251",
+    "infinite_tms",
     "reusable_machines",
+    "reusable_machines_gen2",
     "gen1_modern_ui",
     "gen2_clean_ui"
   ],

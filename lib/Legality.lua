@@ -10,7 +10,7 @@ local Merge = require("src.mods.Merge")
 
 local Legality = {}
 
-local function crystal251(mod) return mod.find and mod.find("CRYSTAL_251") end
+local function crystal251(mod) return mod.find("CRYSTAL_251") end
 
 local function isInt(n) return type(n) == "number" and n == math.floor(n) end
 
