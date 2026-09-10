@@ -32,7 +32,7 @@ function Pickers.openMonPicker(mod, core, game, opts)
   end
 
   local function currentList()
-    if state.view == "bank" then return loadStorage().boxes[state.bankBox]
+    if state.view == "bank" then return loadStorage().boxes[state.bankBox].content
     elseif state.view == "party" then return game.save.party
     else return game.save.boxes[state.pcBox] end
   end
@@ -214,7 +214,7 @@ function Pickers.openBoxPicker(mod, core, game, opts)
 
   local function currentBoxNum() return state.view == "bank" and state.bankBox or state.pcBox end
   local function currentBox()
-    if state.view == "bank" then return loadStorage().boxes[state.bankBox]
+    if state.view == "bank" then return loadStorage().boxes[state.bankBox].content
     else return game.save.boxes[state.pcBox] end
   end
 

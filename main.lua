@@ -292,13 +292,14 @@ return function(mod)
       return buildOptionsListScreen(game, mod.id, OPTION_SCHEMA, PC_MENU_LABEL, extraRows)
     end,
   })
-  
+
   local core = {
     -- storage
     loadStorage = Bank.loadStorage,
     markDirty = Bank.markDirty,
     flushStorage = Bank.flushStorage,
     normalizeBoxes = Bank.normalizeBoxes,
+    newBox = Bank.newBox,
     ensureOrphaned = Bank.ensureOrphaned,
     reconcileCountBucket = Bank.reconcileCountBucket,
     listOrphaned = Bank.listOrphaned,
@@ -756,6 +757,7 @@ return function(mod)
   mod.exports.isPcEntryEnabled = function() return pcEntryEnabled() end
   mod.exports.setBoxSizeOverride = Bank.setBoxSizeOverride
   mod.exports.getBoxSizeOverride = Bank.getBoxSizeOverride
+  mod.exports.listBoxes = Bank.listBoxes
   mod.exports.getStorageId = Bank.getStorageId
   mod.exports.translateSpeciesId = GenerationMap.translateSpeciesId
   mod.exports.translateItemId = GenerationMap.translateItemId

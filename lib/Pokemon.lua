@@ -90,7 +90,7 @@ function Module.install(mod, core)
     local s = loadStorage()
     local count = 0
     for _, box in ipairs(s.boxes) do
-      for _, mon in ipairs(box) do
+      for _, mon in ipairs(box.content) do
         healMon(game, mon)
         count = count + 1
       end
@@ -269,11 +269,12 @@ function Module.install(mod, core)
     local start = math.min(s.currentBox, n)
     for off = 0, n - 1 do
       local i = ((start - 1 + off) % n) + 1
-      if #s.boxes[i] < boxCapacity() then
-        table.insert(s.boxes[i], mon)
+      local content = s.boxes[i].content
+      if #content < boxCapacity() then
+        table.insert(content, mon)
         normalizeBoxes(s)
         markDirty()
-        return i, #s.boxes[i]
+        return i, #content
       end
     end
     return nil
@@ -320,7 +321,7 @@ function Module.install(mod, core)
 
   local function bankIdTaken(s, id)
     for _, box in ipairs(s.boxes) do
-      for _, mon in ipairs(box) do
+      for _, mon in ipairs(box.content) do
         if mon.bankId == id then return true end
       end
     end
@@ -379,7 +380,7 @@ function Module.install(mod, core)
     local orphaned = core.ensureOrphaned(s)
     local bankIdAssigned = false
     for _, box in ipairs(s.boxes) do
-      for _, mon in ipairs(box) do
+      for _, mon in ipairs(box.content) do
         if assignBankId(s, mon) then bankIdAssigned = true end
       end
     end
@@ -390,11 +391,11 @@ function Module.install(mod, core)
     local lostMons, restoredMons, lostItems = {}, {}, {}
     local originBackfilled = false
     for boxNum = 1, #s.boxes do
-      local box = s.boxes[boxNum]
-      for idx = #box, 1, -1 do
-        local mon = box[idx]
+      local content = s.boxes[boxNum].content
+      for idx = #content, 1, -1 do
+        local mon = content[idx]
         if not isValidPokemon(mon, data) then
-          table.remove(box, idx)
+          table.remove(content, idx)
           orphaned.mons[#orphaned.mons + 1] = mon
           quarantined = quarantined + 1
           lostMons[#lostMons + 1] = { species = mon.species, from = "BOX " .. boxNum }
@@ -407,7 +408,7 @@ function Module.install(mod, core)
     end
     normalizeBoxes(s)
     local targetBoxNum = #s.boxes
-    local targetBox = s.boxes[targetBoxNum]
+    local targetContent = s.boxes[targetBoxNum].content
     for idx = #orphaned.mons, 1, -1 do
       local mon = orphaned.mons[idx]
       if isValidPokemon(mon, data) then
@@ -415,12 +416,12 @@ function Module.install(mod, core)
         checkHeldItem(game, mon, orphaned, lostItems)
         if backfillOrigin(game, mon) then originBackfilled = true end
         -- Find space in current target box or create new if needed
-        if #targetBox >= boxCapacity() then
-          s.boxes[#s.boxes + 1] = {}
+        if #targetContent >= boxCapacity() then
+          s.boxes[#s.boxes + 1] = core.newBox(s)
           targetBoxNum = #s.boxes
-          targetBox = s.boxes[targetBoxNum]
+          targetContent = s.boxes[targetBoxNum].content
         end
-        table.insert(targetBox, mon)
+        table.insert(targetContent, mon)
         restored = restored + 1
         restoredMons[#restoredMons + 1] = { species = mon.species, box = targetBoxNum }
       end
@@ -428,7 +429,7 @@ function Module.install(mod, core)
     normalizeBoxes(s)
     local scrubbed = 0
     for _, box in ipairs(s.boxes) do
-      for _, mon in ipairs(box) do
+      for _, mon in ipairs(box.content) do
         if scrubInvalidMoves(s, mon, orphaned, data) then scrubbed = scrubbed + 1 end
       end
     end
@@ -461,9 +462,10 @@ function Module.install(mod, core)
   function Pokemon.withdrawMon(boxNum, idx)
     local s = loadStorage()
     local box = s.boxes[boxNum]
-    local mon = box and box[idx]
+    local content = box and box.content
+    local mon = content and content[idx]
     if not mon then return nil end
-    table.remove(box, idx)
+    table.remove(content, idx)
     normalizeBoxes(s)
     markDirty()
     return mon
@@ -471,7 +473,7 @@ function Module.install(mod, core)
 
   local function peekMon(boxNum, idx)
     local box = loadStorage().boxes[boxNum]
-    return box and box[idx] or nil
+    return box and box.content[idx] or nil
   end
 
   local Legality = V.require("Legality")
@@ -513,11 +515,13 @@ function Module.install(mod, core)
 
   local function moveMon(srcBox, srcIdx, destBox, destIdx)
     local s = loadStorage()
-    local from = s.boxes[srcBox]
+    local fromBox = s.boxes[srcBox]
+    local from = fromBox and fromBox.content
     local mon = from and from[srcIdx]
     if not mon then return false end
     if srcBox == destBox and destIdx == srcIdx then return false end
-    local to = s.boxes[destBox]
+    local toBox = s.boxes[destBox]
+    local to = toBox and toBox.content
     if not to then return false end
     local destMon = to[destIdx]
     if destMon then
@@ -538,16 +542,14 @@ function Module.install(mod, core)
     local out = {}
     local s = loadStorage()
     for boxNum, box in ipairs(s.boxes) do
-      for idx, mon in ipairs(box) do
-        out[#out + 1] = { box = boxNum, index = idx, mon = mon }
-      end
+      for idx, mon in ipairs(box.content) do out[#out + 1] = { box = boxNum, index = idx, mon = mon } end
     end
     return out
   end
 
   local function countMons()
     local n = 0
-    for _, box in ipairs(loadStorage().boxes) do n = n + #box end
+    for _, box in ipairs(loadStorage().boxes) do n = n + #box.content end
     return n
   end
 
@@ -562,9 +564,10 @@ function Module.install(mod, core)
     local cap = boxCapacity()
     local items = {}
     for i = 1, #s.boxes do
+      local content = s.boxes[i].content
       items[#items + 1] = {
         label = boxLabel(s, i),
-        sub = cap == math.huge and tostring(#s.boxes[i]) or ("%d/%d"):format(#s.boxes[i], cap),
+        sub = cap == math.huge and tostring(#content) or ("%d/%d"):format(#content, cap),
         value = i,
       }
     end
@@ -598,13 +601,13 @@ function Module.install(mod, core)
   end
 
   local function renameBox(game, view, boxNum, onDone)
-    local current = view == "bank" and ((loadStorage().boxNames or {})[boxNum] or "") or (pcBoxName(game, boxNum) or "")
+    local current = view == "bank" and ((loadStorage().boxes[boxNum] or {}).name or "") or (pcBoxName(game, boxNum) or "")
     local function apply(name)
       local value = (name and #name > 0) and name or nil
       if view == "bank" then
         local st = loadStorage()
-        st.boxNames = st.boxNames or {}
-        st.boxNames[boxNum] = value
+        local box = st.boxes[boxNum]
+        if box then box.name = value end
         markDirty()
       else
         pcBoxNamesTable()[boxNum] = value
@@ -632,20 +635,12 @@ function Module.install(mod, core)
   local function deleteBox(game, boxNum, onDone)
     local s = loadStorage()
     local box = s.boxes[boxNum]
-    if not box or #box > 0 then
+    if not box or #box.content > 0 then
       message(game, "That box still\nhas POKéMON\nin it!")
       if onDone then onDone() end
       return
     end
     table.remove(s.boxes, boxNum)
-    if s.boxNames then
-      local shifted = {}
-      for i, name in pairs(s.boxNames) do
-        if i < boxNum then shifted[i] = name
-        elseif i > boxNum then shifted[i - 1] = name end
-      end
-      s.boxNames = shifted
-    end
     normalizeBoxes(s)
     markDirty()
     if onDone then onDone() end
@@ -772,8 +767,6 @@ function Module.install(mod, core)
             boxes[a], boxes[b] = boxes[b], boxes[a]
             if state.view == "bank" then
               local st = loadStorage()
-              st.boxNames = st.boxNames or {}
-              st.boxNames[a], st.boxNames[b] = st.boxNames[b], st.boxNames[a]
               if st.currentBox == a then st.currentBox = b
               elseif st.currentBox == b then st.currentBox = a end
               normalizeBoxes(st)
@@ -799,8 +792,10 @@ function Module.install(mod, core)
 
   local function transferBankBox(srcBoxNum, destBoxNum)
     local s = loadStorage()
-    local src = s.boxes[srcBoxNum]
-    local dest = s.boxes[destBoxNum]
+    local srcBox = s.boxes[srcBoxNum]
+    local destBox = s.boxes[destBoxNum]
+    local src = srcBox and srcBox.content
+    local dest = destBox and destBox.content
     if not src or #src == 0 or not dest then return 0, 0 end
     local mons = {}
     for i = 1, #src do mons[i] = src[i] end
@@ -866,7 +861,7 @@ function Module.install(mod, core)
     local function currentBoxNum() return state.view == "bank" and state.bankBox or state.pcBox end
 
     local function currentBox()
-      if state.view == "bank" then return loadStorage().boxes[state.bankBox]
+      if state.view == "bank" then return loadStorage().boxes[state.bankBox].content
       else return game.save.boxes[state.pcBox] end
     end
 
@@ -927,7 +922,8 @@ function Module.install(mod, core)
       end
       if source.view == "bank" and state.view == "pc" then
         local needing = 0
-        for _, mon in ipairs(loadStorage().boxes[source.box] or {}) do
+        local sourceBox = loadStorage().boxes[source.box]
+        for _, mon in ipairs(sourceBox and sourceBox.content or {}) do
           if needsLegalityFix(mon, game) then needing = needing + 1 end
         end
         if needing > 0 then
@@ -1050,7 +1046,7 @@ function Module.install(mod, core)
     local rebuild, performMove, releaseCurrent, completeSwitch, openMonActions, backHandler, chooseCurrent
 
     local function currentList()
-      if state.view == "bank" then return loadStorage().boxes[state.bankBox]
+      if state.view == "bank" then return loadStorage().boxes[state.bankBox].content
       elseif state.view == "party" then return game.save.party
       else return game.save.boxes[state.pcBox] end
     end
@@ -1382,10 +1378,11 @@ function Module.install(mod, core)
     local s = loadStorage()
     local box = s.boxes[boxNum]
     if not box then return nil end
+    local content = box.content
     local cap = boxCapacity()
-    local slots = cap == math.huge and #box or cap
+    local slots = cap == math.huge and #content or cap
     local copy = {}
-    for i = 1, slots do copy[i] = box[i] end
+    for i = 1, slots do copy[i] = content[i] end
     return copy
   end
   mod.exports.movePokemon = moveMon
@@ -1424,7 +1421,7 @@ function Module.install(mod, core)
 
   local function firstNonEmptyBox(s)
     local boxNum = 1
-    while boxNum <= #s.boxes and #s.boxes[boxNum] == 0 do boxNum = boxNum + 1 end
+    while boxNum <= #s.boxes and #s.boxes[boxNum].content == 0 do boxNum = boxNum + 1 end
     return boxNum <= #s.boxes and boxNum or nil
   end
 
@@ -1453,14 +1450,15 @@ function Module.install(mod, core)
       local cap = boxCapacity()
       for off = 0, #s.boxes - 1 do
         local boxNum = ((currentBoxNum - 1 + off) % #s.boxes) + 1
-        if #s.boxes[boxNum] < cap then
-          table.insert(s.boxes[boxNum], mon)
+        local content = s.boxes[boxNum].content
+        if #content < cap then
+          table.insert(content, mon)
           currentBoxNum = boxNum
-          return { box = boxNum, index = #s.boxes[boxNum], mon = mon }
+          return { box = boxNum, index = #content, mon = mon }
         end
       end
-      s.boxes[#s.boxes + 1] = {}
-      table.insert(s.boxes[#s.boxes], mon)
+      s.boxes[#s.boxes + 1] = core.newBox(s)
+      table.insert(s.boxes[#s.boxes].content, mon)
       currentBoxNum = #s.boxes
       return { box = #s.boxes, index = 1, mon = mon }
     end
@@ -1514,7 +1512,8 @@ function Module.install(mod, core)
     local s = loadStorage()
     sourceBoxNum = sourceBoxNum or firstNonEmptyBox(s)
     if not sourceBoxNum then return nil, "bank is empty" end
-    local sourceBox = s.boxes[sourceBoxNum]
+    local sourceBoxStruct = s.boxes[sourceBoxNum]
+    local sourceBox = sourceBoxStruct and sourceBoxStruct.content
     if not sourceBox then return nil, "invalid bank box" end
     if #sourceBox == 0 then return nil, "bank box is empty" end
     indices = indices or allIndices(#sourceBox)
@@ -1548,7 +1547,8 @@ function Module.install(mod, core)
     local s = loadStorage()
     sourceBoxNum = sourceBoxNum or firstNonEmptyBox(s)
     if not sourceBoxNum then return nil, "bank is empty" end
-    local sourceBox = s.boxes[sourceBoxNum]
+    local sourceBoxStruct = s.boxes[sourceBoxNum]
+    local sourceBox = sourceBoxStruct and sourceBoxStruct.content
     if not sourceBox then return nil, "invalid bank box" end
     if #sourceBox == 0 then return nil, "bank box is empty" end
     indices = indices or allIndices(#sourceBox)

@@ -4,7 +4,7 @@ local GameVersion = require("src.core.GameVersion")
 local Strings = require("src.core.Strings")
 local Utils = V.require("Utils")
 
-local STORAGE_VERSION = 5
+local STORAGE_VERSION = 6
 local PC_BOX_NAMES_KEY = "boxNames"
 
 local Module = {}
@@ -12,11 +12,29 @@ local Module = {}
 function Module.install(mod, File)
   local Storage = { STORAGE_VERSION = STORAGE_VERSION }
 
+  local function boxIdTaken(boxes, id)
+    for _, box in ipairs(boxes) do
+      if type(box) == "table" and box.id == id then return true end
+    end
+    return false
+  end
+
+  local function freshBox(boxes)
+    return {
+      id = Utils.generateId(function(id) return boxIdTaken(boxes, id) end),
+      name = nil,
+      content = {}
+    }
+  end
+
+  function Storage.newBox(s) return freshBox(s.boxes) end
+
   local function freshStorage()
+    local boxes = {}
+    boxes[1] = freshBox(boxes)
     return {
       version = STORAGE_VERSION,
-      boxes = { {} },
-      boxNames = {},
+      boxes = boxes,
       currentBox = 1,
       items = {},
       moves = {},
@@ -86,25 +104,26 @@ function Module.install(mod, File)
 
   function Storage.normalizeBoxes(s)
     local boxes = type(s.boxes) == "table" and s.boxes or {}
-    local oldNames = type(s.boxNames) == "table" and s.boxNames or {}
     local policy = mod.options:get("empty_box_deletion") or "unnamed"
-    local compact, names = {}, {}
-    for i, box in ipairs(boxes) do
+    local compact = {}
+    for _, box in ipairs(boxes) do
       if type(box) == "table" then
-        local name = oldNames[i]
-        local named = type(name) == "string" and name ~= ""
-        local drop = #box == 0 and (policy == "all" or (policy == "unnamed" and not named))
+        local content = type(box.content) == "table" and box.content or {}
+        local name = type(box.name) == "string" and box.name ~= "" and box.name or nil
+        local drop = #content == 0 and (policy == "all" or (policy == "unnamed" and not name))
         if not drop then
-          compact[#compact + 1] = box
-          if named then names[#compact] = name end
+          local id = box.id
+          if id == nil or boxIdTaken(compact, id) then
+            id = Utils.generateId(function(candidate) return boxIdTaken(compact, candidate) end)
+          end
+          compact[#compact + 1] = { id = id, name = name, content = content }
         end
       end
     end
-    if #compact == 0 or #compact[#compact] > 0 then
-      compact[#compact + 1] = {}
+    if #compact == 0 or #compact[#compact].content > 0 then
+      compact[#compact + 1] = freshBox(compact)
     end
     s.boxes = compact
-    s.boxNames = names
     s.currentBox = math.max(1, math.min(#s.boxes, math.floor(tonumber(s.currentBox) or 1)))
     s.items = type(s.items) == "table" and s.items or {}
     s.moves = type(s.moves) == "table" and s.moves or {}
@@ -131,9 +150,10 @@ function Module.install(mod, File)
     if capacity == math.huge then return false end
     local excess = {}
     for _, box in ipairs(s.boxes) do
-      if type(box) == "table" and #box > capacity then
-        for i = capacity + 1, #box do excess[#excess + 1] = box[i] end
-        for i = #box, capacity + 1, -1 do box[i] = nil end
+      local content = type(box) == "table" and box.content
+      if type(content) == "table" and #content > capacity then
+        for i = capacity + 1, #content do excess[#excess + 1] = content[i] end
+        for i = #content, capacity + 1, -1 do content[i] = nil end
       end
     end
     if #excess == 0 then return false end
@@ -141,15 +161,15 @@ function Module.install(mod, File)
     for _, mon in ipairs(excess) do
       local box = s.boxes[boxNum]
       if not box then
-        box = {}
+        box = freshBox(s.boxes)
         s.boxes[boxNum] = box
       end
-      if #box >= capacity then
+      if #box.content >= capacity then
         boxNum = boxNum + 1
-        box = {}
+        box = freshBox(s.boxes)
         s.boxes[boxNum] = box
       end
-      table.insert(box, mon)
+      table.insert(box.content, mon)
     end
     return true
   end
@@ -174,6 +194,22 @@ function Module.install(mod, File)
       -- Only set orphaned if it has content
       if #orphaned.mons > 0 or next(orphaned.items) ~= nil then s.orphaned = orphaned end
     end
+    if currentVersion < 6 then
+      local oldNames = type(s.boxNames) == "table" and s.boxNames or {}
+      local oldBoxes = type(s.boxes) == "table" and s.boxes or {}
+      local boxes = {}
+      for i, content in ipairs(oldBoxes) do
+        local name = oldNames[i]
+        boxes[i] = {
+          id = Utils.generateId(function(id) return boxIdTaken(boxes, id) end),
+          name = (type(name) == "string" and name ~= "") and name or nil,
+          content = type(content) == "table" and content or {},
+        }
+      end
+      if #boxes == 0 then boxes[1] = freshBox(boxes) end
+      s.boxes = boxes
+      s.boxNames = nil
+    end
     s.version = STORAGE_VERSION
     return true
   end
@@ -194,6 +230,17 @@ function Module.install(mod, File)
   Storage.resetStorage = storage.resetFile
   Storage.readBackup = storage.readFileBackup
   Storage.deleteStorage = storage.deleteFile
+
+  function Storage.listBoxes()
+    local out = {}
+    for index, box in ipairs(storage.loadFile().boxes or {}) do
+      out[index] = {
+        id = box.id,
+        name = box.name,
+      }
+    end
+    return out
+  end
 
   function Storage.listOrphaned(bucketName)
     local out = {}
@@ -237,7 +284,8 @@ function Module.install(mod, File)
   end
 
   function Storage.boxLabel(s, i)
-    local name = s.boxNames and s.boxNames[i]
+    local box = s.boxes and s.boxes[i]
+    local name = box and box.name
     if type(name) == "string" and name ~= "" then return name end
     return Strings("BOX %d", i)
   end
@@ -257,9 +305,7 @@ function Module.install(mod, File)
       newOverride = math.huge
     else
       local n = tonumber(value)
-      if not n or n ~= math.floor(n) or n <= 0 then
-        return false, "bad request"
-      end
+      if not n or n ~= math.floor(n) or n <= 0 then return false, "bad request" end
       newOverride = n
     end
     if newOverride == boxCapacityOverride then return true end
@@ -268,9 +314,7 @@ function Module.install(mod, File)
     return true
   end
 
-  function Storage.getBoxSizeOverride()
-    return boxCapacityOverride
-  end
+  function Storage.getBoxSizeOverride() return boxCapacityOverride end
 
   function Storage.getStorageId()
     local s = storage.loadFile()

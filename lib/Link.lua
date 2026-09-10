@@ -128,7 +128,7 @@ function Module.install(mod, core, Pokemon, Items, Money)
 
     local function currentBox()
       state.bankBox = math.max(1, math.min(#loadStorage().boxes, state.bankBox))
-      return loadStorage().boxes[state.bankBox]
+      return loadStorage().boxes[state.bankBox].content
     end
 
     local function cycleBankBox(delta)

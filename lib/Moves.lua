@@ -344,7 +344,7 @@ function Module.install(mod, core)
   local function scanMons(game, fn)
     local s = loadStorage()
     for _, box in ipairs(s.boxes) do
-      for _, mon in ipairs(box) do
+      for _, mon in ipairs(box.content) do
         if fn(mon) then return true end
       end
     end
