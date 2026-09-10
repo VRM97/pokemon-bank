@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.1.0
+
+`storage.lua` bumped to **version 6**: each box now carries a stable id alongside its name and Pokémon, instead of names living in a separate sparse `boxNames` map.
+
+The game's own OPTIONS > POKéMON BANK page can now host another mod's own options as its own row on that page (opening its own list), instead of that mod needing an entry point of its own.
+
+### Fixes
+- An OFF toggle on this page showed `false` instead of `OFF`, and its description line always showed the ON hint regardless of the actual state. A `choice` row whose stored value matched none of its current choices, with an empty `choices` array, could also crash outright instead of falling back to a placeholder.
+
+### API
+- New exports `registerOptionsPanel(panel)`/`unregisterOptionsPanel(id)`.
+
 ## 2.0.0
 
 Each Bank carries its own persistent id, so **LINK also refuses to connect a Bank to itself** the same way it already refuses the same trainer. A received Pokémon is stamped with `originStorageId`, the sending Bank's own id. **SEND now has a LOST option**, for whatever the Bank has quarantined in case the other player's game actually recognizes it.
