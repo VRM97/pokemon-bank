@@ -54,9 +54,7 @@ function Utils.idQtyPayload(id, qty) return { id = id, qty = qty } end
 
 function Utils.generateId(taken)
   local id
-  repeat
-    id = love.math.random(1, 999999999)
-  until not taken or not taken(id)
+  repeat id = love.math.random(1, 999999999) until not taken or not taken(id)
   return id
 end
 

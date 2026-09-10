@@ -212,18 +212,20 @@ return function(mod)
   end
 
   local function buildOptionsListScreen(game, targetId, schema, title, extraRows)
-      local list
-      local function rebuildItems()
+    local list
+
+    local function rebuildItems()
       local items = buildOptionRows(game, targetId, schema)
       for _, row in ipairs(extraRows or {}) do items[#items + 1] = row end
       items[#items + 1] = { label = "CANCEL", description = "Close this menu." }
-        return items
-      end
+      return items
+    end
+    
     list = mod.ui.ListMenu.new(game, title, rebuildItems(), {
-        rows = 6, wrap = true,
-        onChoose = function(item, menu)
-          if not item then return end
-          if item.schema then
+      rows = 6, wrap = true,
+      onChoose = function(item, menu)
+        if not item then return end
+        if item.schema then
           local schemaType = item.schema.type
           if schemaType == "choice" and #(item.schema.choices or {}) > 2 then
             openOptionChoicePopup(game, targetId, menu, item.schema, rebuildItems)
@@ -233,21 +235,21 @@ return function(mod)
             openTextPrompt(game, targetId, menu, item.schema, rebuildItems)
           else
             cycleOptionValue(game, targetId, item.schema)
-              local index = menu.index
-              menu.items = rebuildItems()
-              menu.index = index
-              menu.footer = nil
-            end
-          elseif item.onSelect then
-            item.onSelect()
-          elseif menu and menu.close then menu:close() end
-        end,
-      })
-      ListUi.attachDynamicFooter(list, function(l)
-        local item = l.items[l.index]
-        return item and item.description or nil
-      end)
-      return list
+            local index = menu.index
+            menu.items = rebuildItems()
+            menu.index = index
+            menu.footer = nil
+          end
+        elseif item.onSelect then
+          item.onSelect()
+        elseif menu and menu.close then menu:close() end
+      end,
+    })
+    ListUi.attachDynamicFooter(list, function(l)
+      local item = l.items[l.index]
+      return item and item.description or nil
+    end)
+    return list
   end
 
   local panels = {}
