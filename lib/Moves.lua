@@ -19,13 +19,25 @@ function Module.install(mod, core)
   local playSound = core.playSound
   local askQuantity = core.askQuantity
 
-  local function tmItemId(moveId) return "TM_" .. moveId end
+  local function isHmItem(id) return type(id) == "string" and id:sub(1, 3):upper() == "HM_" end
 
   local function tmMoveId(id, def)
-    if type(id) ~= "string" or id:sub(1, 3) ~= "TM_" then return nil end
-    if def and def.machine and def.machine.kind == "TM" and def.machine.move then return def.machine.move end
-    if def and def.teaches then return def.teaches end
-    return id:sub(4)
+    if type(def) ~= "table" or isHmItem(id) then return nil end
+    if def.machine and def.machine.kind == "TM" and def.machine.move then return def.machine.move end
+    if def.teaches then return def.teaches end
+    return nil
+  end
+
+  local tmItemIndex
+  local function tmItemId(moveId)
+    if not tmItemIndex then
+      tmItemIndex = {}
+      for id, def in mod.content.items:each() do
+        local move = tmMoveId(id, def)
+        if move and not tmItemIndex[move] then tmItemIndex[move] = id end
+      end
+    end
+    return tmItemIndex[moveId] or ("TM_" .. moveId)
   end
 
   local function isValidMachine(id, data)

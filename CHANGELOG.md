@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.1.1
+
+### Fixes
+- A banked move whose TM item id didn't literally follow the `TM_<MOVE>` pattern (a TM added by another mod under its own id scheme) could be deposited but never withdrawn, since WITHDRAW MOVE looked up that fixed pattern instead of the item that actually teaches the move.
+
 ## 2.1.0
 
 `storage.lua` bumped to **version 6**: each box now carries a stable id alongside its name and Pokémon, instead of names living in a separate sparse `boxNames` map.
