@@ -299,7 +299,10 @@ function Module.install(mod, core, Pokemon)
     end
 
     local function attemptWithdrawTo(index, destView)
-      local destBox = destView == "pc" and (game.save.currentBox or 1) or nil
+      local destBox
+      if destView == "pc" then destBox = game.save.currentBox or 1
+      elseif destView == "bank" then destBox = core.loadStorage().currentBox or 1
+      end
       local mon, msg = checkWithdrawOnce(index)
       if mon then
         finishWithdrawTo(index, mon, destView, destBox)

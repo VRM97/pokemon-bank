@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.1.2
+
+### Fixes
+- Withdrawing a single Pokémon from TIME CAPSULE straight to BANK crashed the game instead of storing it.
+
 ## 2.1.1
 
 ### Fixes
