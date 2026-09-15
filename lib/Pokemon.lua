@@ -400,9 +400,10 @@ function Module.install(mod, core)
           quarantined = quarantined + 1
           lostMons[#lostMons + 1] = { species = mon.species, from = "BOX " .. boxNum }
         else
-          local heldChanged = checkHeldItem(game, mon, orphaned, lostItems)
+          reshapeForActiveGame(game, mon)
+          checkHeldItem(game, mon, orphaned, lostItems)
           if backfillOrigin(game, mon) then originBackfilled = true end
-          if heldChanged then markDirty() end
+          markDirty()
         end
       end
     end
@@ -413,6 +414,7 @@ function Module.install(mod, core)
       local mon = orphaned.mons[idx]
       if isValidPokemon(mon, data) then
         table.remove(orphaned.mons, idx)
+        reshapeForActiveGame(game, mon)
         checkHeldItem(game, mon, orphaned, lostItems)
         if backfillOrigin(game, mon) then originBackfilled = true end
         -- Find space in current target box or create new if needed
@@ -477,10 +479,8 @@ function Module.install(mod, core)
   end
 
   local Legality = V.require("Legality")
-  local function isLegal(mon, game)
-    reshapeForActiveGame(game, mon)
-    return Legality.isLegal(mod, core, game, mon)
-  end
+  
+  local function isLegal(mon, game) return Legality.isLegal(mod, core, game, mon) end
 
   local function fixLegal(mon, game) return Legality.fix(mod, core, game, mon) end
 
@@ -1259,6 +1259,7 @@ function Module.install(mod, core)
       })
       if oldIndex then core.setListCursor(list, oldIndex) end
       core.attachLevelIcons(list, src)
+      core.attachHeldItemMarks(list, src, game)
       local pending = state.pendingSwap
       if pending and pending.view == state.view then
         local sameBox = state.view == "party" or (state.view == "bank" and pending.box == state.bankBox) or (state.view == "pc" and pending.box == state.pcBox)
@@ -1364,7 +1365,6 @@ function Module.install(mod, core)
     local mon = Pokemon.withdrawMon(boxNum, index)
     if mon then
       if game then
-        reshapeForActiveGame(game, mon)
         stampNewTrainer(game, mon)
         autoHealMon("withdraw", game, mon)
       end
@@ -1522,7 +1522,6 @@ function Module.install(mod, core)
     local withdrawn, remainingCount = bulkTransfer(sourceBox, indices, function(mon, originalIdx)
       if #party >= Party.MAX then return nil end
       if not withdrawEligible(mon, game, opts.fix) then return nil end
-      reshapeForActiveGame(game, mon)
       stampNewTrainer(game, mon)
       autoHealMon("withdraw", game, mon)
       table.insert(party, mon)
@@ -1560,7 +1559,6 @@ function Module.install(mod, core)
         local boxNum = ((currentPcBoxNum - 1 + off) % Boxes.COUNT) + 1
         local box = game.save.boxes[boxNum]
         if box and #box < Boxes.CAPACITY then
-          reshapeForActiveGame(game, mon)
           stampNewTrainer(game, mon)
           autoHealMon("withdraw", game, mon)
           table.insert(box, mon)

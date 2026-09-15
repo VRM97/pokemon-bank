@@ -323,6 +323,7 @@ return function(mod)
     lostBrowser = ListUi.lostBrowser,
     gen1ModernUiListAdapter = ListUi.gen1ModernUiListAdapter,
     attachLevelIcons = ListUi.attachLevelIcons,
+    attachHeldItemMarks = ListUi.attachHeldItemMarks,
     attachDynamicFooter = ListUi.attachDynamicFooter,
     monName = ListUi.monName,
     moveName = ListUi.moveName,

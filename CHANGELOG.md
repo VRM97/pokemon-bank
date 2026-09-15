@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.2.0
+
+The BANK's Pokémon list now marks a held item next to a nickname: the real Gen 2 icon, or a small square in Gen 1.
+
+A Pokémon's cross-generation shaping (held item field, stats, gender, status, and the rest `reshapeForActiveGame` backfills) now happens once, right after it's validated, instead of again at every withdraw, STATS view, or transfer.
+
 ## 2.1.2
 
 ### Fixes

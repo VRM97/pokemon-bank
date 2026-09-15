@@ -8,7 +8,7 @@ Open any Pokémon Center PC and select **POKéMON BANK**. Five options:
 
 ### POKéMON
 
-**MANAGE PKMN** browses the Bank, your party and a PC box at once (SELECT cycles, Left/Right flips boxes). Picking a Pokémon offers TO BANK/PARTY/PC, SWITCH, STATS or RELEASE. On BANK/PC, **START opens MANAGE BOX**; the title also shows MANAGE BOX's own small square whenever the box on screen is the current one. The highlighted Pokémon's own species shows under the list.
+**MANAGE PKMN** browses the Bank, your party and a PC box at once (SELECT cycles, Left/Right flips boxes). Picking a Pokémon offers TO BANK/PARTY/PC, SWITCH, STATS or RELEASE. On BANK/PC, **START opens MANAGE BOX**; the title also shows MANAGE BOX's own small square whenever the box on screen is the current one. The highlighted Pokémon's own species shows under the list. A Pokémon holding an item is marked next to its name: the same icon Bill's PC uses on Gen 2, a small square on Gen 1.
 
 **MANAGE BOX** browses BANK and PC at once (SELECT cycles), listing every box with its Pokémon count, a small square next to the name marking the current one. Picking a box offers **VIEW** (closes box manager and jumps straight back to that box Pokémon list), **CHANGE** (makes it the current box), **SWITCH** (swaps two boxes), **TRANSFER** (moves its entire contents at once to a box you then pick overflowing into further boxes if needed) and **RENAME** (opens the naming screen; a blank name reverts it to default). **DELETE** (removes a box outright, only works on an already-empty box) is **BANK** only.
 

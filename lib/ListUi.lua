@@ -3,10 +3,39 @@ local V = ...
 local Strings = require("src.core.Strings")
 local Font = require("src.render.Font")
 local ListMenu = require("src.ui.ListMenu")
+local GameVersion = require("src.core.GameVersion")
 local Utils = V.require("Utils")
 
 local LOST_VIEWS = { "pokemon", "items", "moves" }
 local LOST_VIEW_TITLE = { pokemon = "LOST <PK><MN>", items = "LOST ITEMS", moves = "LOST MOVES" }
+
+local function hasHeldItem(mon)
+  if type(mon) ~= "table" then return false end
+  local item = mon.item or mon.heldItem
+  return item ~= nil and item ~= "" and item ~= 0
+end
+
+-- Bill's PC's own held-item marker (engine/pokemon/bills_pc.asm:1079-1094):
+-- an 8x8 tile from the same PCMailGFX sheet, picked by PartyMenu.heldMarkerRow.
+local function drawGen2HeldItemIcon(x, y, mon, game)
+  local PartyMenu = require("src.ui.gen2.PartyMenu")
+  local row = PartyMenu.heldMarkerRow(mon)
+  if not row then return false end
+  local gfx = game and game.data and game.data.gen2MenuGfx and game.data.gen2MenuGfx.billsPc
+  if not (gfx and gfx.icons) then return false end
+  local Assets = require("src.render.Assets")
+  local okImage, image = pcall(Assets.image, gfx.icons)
+  if not (okImage and image) then return false end
+  local okQuad, quad = pcall(love.graphics.newQuad, row * 8, 0, 8, 8, image:getDimensions())
+  if not okQuad then return false end
+  local G = love.graphics
+  local function body() G.draw(image, quad, x, y) end
+  local GbcPalette = require("src.render.GbcPalette")
+  local okAvail, avail = pcall(GbcPalette.available)
+  G.setColor(1, 1, 1, 1)
+  if gfx.palette and okAvail and avail then GbcPalette.with(gfx.palette, body) else body() end
+  return true
+end
 
 local ListUi = {
   syncListScroll = function(list)
@@ -60,10 +89,51 @@ local ListUi = {
   attachLevelIcons = function(list, mons)
     for i, item in ipairs(list.items) do
       local mon = mons[i]
-      if mon then
-        local level = Strings(":L%d", mon.level)
-        if list.itemBox then item.sub = level else item.right = level end
+      if mon then item.right = tostring(mon.level) end
+    end
+    local origDraw = list.draw
+    function list:draw()
+      origDraw(self)
+      local gen2 = GameVersion.generation() == 2
+      local levelCode = gen2 and Font.encode("<LV>")[1]
+      local HudTiles = not gen2 and require("src.render.HudTiles")
+      if levelCode or HudTiles then
+        local wasBattle = gen2 and Font.useBattleExtra(true)
+        for row = 1, self.rows do
+          local item = self.items[self.scroll + row]
+          local levelText = item and item.right
+          if levelText then
+            local y = self.itemBox and (32 + (row - 1) * 16 + 8) or (8 + row * 16)
+            local right = self.itemBox and 136 or (160 - 8)
+            local x = right - Font.width(levelText) - 8
+            if gen2 then Font.drawCode(levelCode, x, y) else HudTiles.tile(0x6E, x, y) end
+          end
+        end
+        if gen2 then Font.useBattleExtra(wasBattle) end
       end
+    end
+  end,
+  attachHeldItemMarks = function(list, mons, game)
+    local origDraw = list.draw
+    function list:draw()
+      origDraw(self)
+      local gen = GameVersion.generation()
+      for row = 1, self.rows do
+        local item = self.items[self.scroll + row]
+        local mon = item and mons[self.scroll + row]
+        if mon and hasHeldItem(mon) then
+          local y = self.itemBox and (32 + (row - 1) * 16) or (8 + row * 16)
+          local x0 = self.itemBox and 48 or 16
+          local x = x0 + Font.width(item.label) + 6
+          local iconY = y + (self.itemBox and 4 or 0)
+          local drew = gen == 2 and drawGen2HeldItemIcon(x, iconY - 4, mon, game)
+          if not drew then
+            love.graphics.setColor(0, 0, 0, 1)
+            love.graphics.rectangle("fill", x + 2, iconY + 2, 4, 4)
+          end
+        end
+      end
+      love.graphics.setColor(1, 1, 1, 1)
     end
   end,
   attachDynamicFooter = function(list, computeFn)

@@ -7,7 +7,6 @@ local Module = {}
 function Module.install(mod)
   local ModActions = {
     openSummary = function(game, mon)
-      mod.exports.reshapeForActiveGame(game, mon)
       local Screens = require("src.ui.Screens")
       if GameVersion.generation() == 2 then
         Screens.push(game, "Gen2SummaryMenu", { mon = mon, onClose = function() game.stack:pop() end })

@@ -969,20 +969,18 @@ function Module.install(mod, core, Pokemon, Items, Money)
     for _, mon in ipairs(type(offer.mons) == "table" and offer.mons or {}) do
       if type(mon) == "table" and mod.exports.isValidPokemon(mon, game) then
         if mon.originStorageId == nil then mon.originStorageId = senderStorageId end
+        mod.exports.reshapeForActiveGame(game, mon)
         table.insert(receive.mons, mon)
-      elseif type(mon) == "table" then
-        table.insert(receive.orphaned.mons, mon)
-      end
+      elseif type(mon) == "table" then table.insert(receive.orphaned.mons, mon) end
     end
     -- an unrecognized TIME CAPSULE mon has nowhere of its own to sit --
     -- same LOST bucket a regular unrecognized mon already falls into
     for _, mon in ipairs(type(offer.timeCapsuleMons) == "table" and offer.timeCapsuleMons or {}) do
       if type(mon) == "table" and mod.exports.isValidPokemon(mon, game) then
         if mon.originStorageId == nil then mon.originStorageId = senderStorageId end
+        mod.exports.reshapeForActiveGame(game, mon)
         table.insert(receive.timeCapsuleMons, mon)
-      elseif type(mon) == "table" then
-        table.insert(receive.orphaned.mons, mon)
-      end
+      elseif type(mon) == "table" then table.insert(receive.orphaned.mons, mon) end
     end
     for id, qty in pairs(type(offer.items) == "table" and offer.items or {}) do
       qty = math.floor(tonumber(qty) or 0)

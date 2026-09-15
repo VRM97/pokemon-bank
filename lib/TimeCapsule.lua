@@ -119,6 +119,7 @@ function Module.install(mod, core, Pokemon)
     local quarantined, restored = 0, 0
     local lostMons, restoredMons = {}, {}
     local isValid = mod.exports.isValidPokemon
+    local reshape = mod.exports.reshapeForActiveGame
     for idx = #mons, 1, -1 do
       local mon = mons[idx]
       if not (isValid and isValid(mon, game)) then
@@ -126,12 +127,16 @@ function Module.install(mod, core, Pokemon)
         orphaned.timeCapsule[#orphaned.timeCapsule + 1] = mon
         quarantined = quarantined + 1
         lostMons[#lostMons + 1] = { species = mon.species, from = "TIME CAPSULE" }
+      else
+        reshape(game, mon)
+        markDirty()
       end
     end
     for idx = #orphaned.timeCapsule, 1, -1 do
       local mon = orphaned.timeCapsule[idx]
       if isValid and isValid(mon, game) then
         table.remove(orphaned.timeCapsule, idx)
+        reshape(game, mon)
         mons[#mons + 1] = mon
         restored = restored + 1
         restoredMons[#restoredMons + 1] = { species = mon.species, to = "TIME CAPSULE" }
@@ -229,7 +234,6 @@ function Module.install(mod, core, Pokemon)
   end
 
   local function commitWithdraw(game, mon)
-    mod.exports.reshapeForActiveGame(game, mon)
     if mod.exports.registerDex then mod.exports.registerDex(game, mon.species) end
     if not (mon.item or mon.heldItem) then
       local item = itemIdForByte(game, mon.timeCapsuleItemByte)

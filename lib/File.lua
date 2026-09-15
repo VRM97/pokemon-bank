@@ -7,9 +7,7 @@ local DIRNAME = "bank"
 
 local Module = {}
 
-function Module.fs()
-  return SaveData.persistenceFs()
-end
+function Module.fs() return SaveData.persistenceFs() end
 
 function Module.exists(name)
   local fs = Module.fs()
@@ -49,13 +47,9 @@ function Module.writeWithBackup(fileName, backupName, tmpName, encoded)
     local prev = Module.read(fileName)
     if prev then Module.write(backupName, prev) end
   end
-  if not Module.write(tmpName, encoded) then
-    return false, ("could not stage %s"):format(tmpName)
-  end
+  if not Module.write(tmpName, encoded) then return false, ("could not stage %s"):format(tmpName) end
   Module.remove(fileName)
-  if not Module.write(fileName, encoded) then
-    return false, ("could not write %s"):format(fileName)
-  end
+  if not Module.write(fileName, encoded) then return false, ("could not write %s"):format(fileName) end
   Module.remove(tmpName)
   return true
 end
