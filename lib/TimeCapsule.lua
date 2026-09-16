@@ -184,8 +184,7 @@ function Module.install(mod, core, Pokemon)
 
   local function placeInto(game, view, boxNum, mon)
     if view == "bank" then
-      local s = core.loadStorage()
-      s.currentBox = math.max(1, math.min(#s.boxes, boxNum))
+      core.setCurrentBox(boxNum)
       local placedBox = mod.exports.depositPokemon(mon, { game = game })
       return placedBox ~= nil
     end
@@ -305,7 +304,7 @@ function Module.install(mod, core, Pokemon)
     local function attemptWithdrawTo(index, destView)
       local destBox
       if destView == "pc" then destBox = game.save.currentBox or 1
-      elseif destView == "bank" then destBox = core.loadStorage().currentBox or 1
+      elseif destView == "bank" then destBox = core.currentBox()
       end
       local mon, msg = checkWithdrawOnce(index)
       if mon then

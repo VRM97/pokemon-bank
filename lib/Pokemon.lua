@@ -266,7 +266,7 @@ function Module.install(mod, core)
     stampOrigin(mon)
     local s = loadStorage()
     local n = #s.boxes
-    local start = math.min(s.currentBox, n)
+    local start = math.min(core.currentBox(), n)
     for off = 0, n - 1 do
       local i = ((start - 1 + off) % n) + 1
       local content = s.boxes[i].content
@@ -655,9 +655,7 @@ function Module.install(mod, core)
     if callbacks.onView then appendRow("VIEW", callbacks.onView) end
     appendRow("CHANGE", function()
       if view == "bank" then
-        local st = loadStorage()
-        st.currentBox = math.max(1, math.min(#st.boxes, boxNum))
-        markDirty()
+        core.setCurrentBox(boxNum)
       else
         game.save.currentBox = math.max(1, math.min(Boxes.COUNT, boxNum))
       end
@@ -681,7 +679,7 @@ function Module.install(mod, core)
 
     local function boxesOf() return state.view == "bank" and loadStorage().boxes or game.save.boxes end
 
-    local function currentBoxNumOf() return state.view == "bank" and loadStorage().currentBox or game.save.currentBox end
+    local function currentBoxNumOf() return state.view == "bank" and core.currentBox() or game.save.currentBox end
 
     local function viewTitle() return state.view == "bank" and "BANK" or "PC" end
 
@@ -767,8 +765,9 @@ function Module.install(mod, core)
             boxes[a], boxes[b] = boxes[b], boxes[a]
             if state.view == "bank" then
               local st = loadStorage()
-              if st.currentBox == a then st.currentBox = b
-              elseif st.currentBox == b then st.currentBox = a end
+              local cur = core.currentBox()
+              if cur == a then core.setCurrentBox(b)
+              elseif cur == b then core.setCurrentBox(a) end
               normalizeBoxes(st)
               markDirty()
             else
@@ -850,7 +849,7 @@ function Module.install(mod, core)
     Boxes.ensure(game.save)
     local state = {
       view = source.view,
-      bankBox = source.view == "bank" and source.box or loadStorage().currentBox,
+      bankBox = source.view == "bank" and source.box or core.currentBox(),
       pcBox = source.view == "pc" and source.box or math.max(1, math.min(Boxes.COUNT, game.save.currentBox or 1)),
     }
 
@@ -1035,7 +1034,7 @@ function Module.install(mod, core)
     Boxes.ensure(game.save)
     local state = {
       view = opts.initialView or "bank",
-      bankBox = (opts.initialView == "bank" and opts.initialBox) or loadStorage().currentBox,
+      bankBox = (opts.initialView == "bank" and opts.initialBox) or core.currentBox(),
       pcBox = (opts.initialView == "pc" and opts.initialBox) or math.max(1, math.min(Boxes.COUNT, game.save.currentBox or 1)),
       pendingSwap = nil,
     }
@@ -1303,7 +1302,7 @@ function Module.install(mod, core)
       list:draw()
       core.drawListTitle(list)
       if state.view ~= "party" then
-        local current = state.view == "bank" and loadStorage().currentBox or (game.save.currentBox or 1)
+        local current = state.view == "bank" and core.currentBox() or (game.save.currentBox or 1)
         if current == currentBoxNumForView() then drawCurrentBoxTitleMark(list) end
       end
       core.drawListCounter(list)

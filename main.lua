@@ -307,6 +307,8 @@ return function(mod)
     listOrphaned = Bank.listOrphaned,
     orphanedCount = Bank.orphanedCount,
     boxCapacity = Bank.boxCapacity,
+    currentBox = Bank.currentBox,
+    setCurrentBox = Bank.setCurrentBox,
     STORAGE_VERSION = Bank.STORAGE_VERSION,
     getStorageId = Bank.getStorageId,
     boxLabel = Bank.boxLabel,

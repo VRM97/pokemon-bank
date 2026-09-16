@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.3.0
+
+`storage.lua` bumped to **version 7**: BOXES, ITEMS, MOVES, MONEY and TIME CAPSULE now live grouped together instead of as separate top-level fields. Nothing changes from the UI or from any other mod's integration with the Bank.
+
+The BANK now remembers which box was last open separately for each save file, instead of sharing one "current box" across every save that opens the same Bank.
+
 ## 2.2.0
 
 The BANK's Pokémon list now marks a held item next to a nickname: the real Gen 2 icon, or a small square in Gen 1.

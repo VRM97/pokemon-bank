@@ -123,7 +123,7 @@ function Module.install(mod, core, Pokemon, Items, Money)
   local function openSendPokemonPicker(self)
     local game = self.game
     local cart = self.cart.send
-    local state = { bankBox = loadStorage().currentBox }
+    local state = { bankBox = core.currentBox() }
     local group
 
     local function currentBox()

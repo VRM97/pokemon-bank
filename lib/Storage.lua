@@ -4,8 +4,45 @@ local GameVersion = require("src.core.GameVersion")
 local Strings = require("src.core.Strings")
 local Utils = V.require("Utils")
 
-local STORAGE_VERSION = 6
+local STORAGE_VERSION = 7
 local PC_BOX_NAMES_KEY = "boxNames"
+local CURRENT_BOX_KEY = "bank_current_box"
+
+local ENTRY_FIELDS = { boxes = true, items = true, moves = true, money = true, timeCapsule = true }
+local ORPHANED_META = {
+  __index = function(t, k)
+    local boxes = rawget(t, "boxes")
+    if k == "mons" then return boxes and boxes.mons end
+    if k == "monMoves" then return boxes and boxes.moves end
+    return nil
+  end,
+  __newindex = function(t, k, v)
+    if k == "mons" or k == "monMoves" then
+      local boxes = rawget(t, "boxes")
+      if not boxes then
+        boxes = {}
+        rawset(t, "boxes", boxes)
+      end
+      boxes[k == "mons" and "mons" or "moves"] = v
+    else
+      rawset(t, k, v)
+    end
+  end,
+}
+
+local function attachEntryProxy(s)
+  return setmetatable(s, {
+    __index = function(t, k)
+      if ENTRY_FIELDS[k] then return t.entries[k] end
+      return nil
+    end,
+    __newindex = function(t, k, v)
+      if ENTRY_FIELDS[k] then t.entries[k] = v else rawset(t, k, v) end
+    end,
+  })
+end
+
+local function attachOrphanedProxy(orphaned) return setmetatable(orphaned, ORPHANED_META) end
 
 local Module = {}
 
@@ -34,12 +71,13 @@ function Module.install(mod, File)
     boxes[1] = freshBox(boxes)
     return {
       version = STORAGE_VERSION,
-      boxes = boxes,
-      currentBox = 1,
-      items = {},
-      moves = {},
-      money = 0,
-      timeCapsule = {},
+      entries = {
+        boxes = boxes,
+        items = {},
+        moves = {},
+        money = 0,
+        timeCapsule = {},
+      },
     }
   end
 
@@ -50,11 +88,14 @@ function Module.install(mod, File)
   end
 
   function Storage.ensureOrphaned(s)
-    if not s.orphaned then s.orphaned = { mons = {}, items = {}, moves = {}, monMoves = {}, timeCapsule = {} } end
-    s.orphaned.mons = type(s.orphaned.mons) == "table" and s.orphaned.mons or {}
+    if not s.orphaned then s.orphaned = {} end
+    attachOrphanedProxy(s.orphaned)
+    if type(s.orphaned.boxes) ~= "table" then s.orphaned.boxes = {} end
+    local boxesOrphaned = s.orphaned.boxes
+    boxesOrphaned.mons = type(boxesOrphaned.mons) == "table" and boxesOrphaned.mons or {}
+    boxesOrphaned.moves = type(boxesOrphaned.moves) == "table" and boxesOrphaned.moves or {}
     s.orphaned.items = type(s.orphaned.items) == "table" and s.orphaned.items or {}
     s.orphaned.moves = type(s.orphaned.moves) == "table" and s.orphaned.moves or {}
-    s.orphaned.monMoves = type(s.orphaned.monMoves) == "table" and s.orphaned.monMoves or {}
     s.orphaned.timeCapsule = type(s.orphaned.timeCapsule) == "table" and s.orphaned.timeCapsule or {}
     return s.orphaned
   end
@@ -124,7 +165,6 @@ function Module.install(mod, File)
       compact[#compact + 1] = freshBox(compact)
     end
     s.boxes = compact
-    s.currentBox = math.max(1, math.min(#s.boxes, math.floor(tonumber(s.currentBox) or 1)))
     s.items = type(s.items) == "table" and s.items or {}
     s.moves = type(s.moves) == "table" and s.moves or {}
     s.money = math.max(0, math.floor(tonumber(s.money) or 0))
@@ -210,12 +250,31 @@ function Module.install(mod, File)
       s.boxes = boxes
       s.boxNames = nil
     end
+    if currentVersion < 7 then
+      s.entries = {
+        boxes = s.boxes,
+        items = s.items,
+        moves = s.moves,
+        money = s.money,
+        timeCapsule = s.timeCapsule,
+      }
+      s.boxes, s.items, s.moves, s.money, s.timeCapsule = nil, nil, nil, nil, nil
+      if s.orphaned then
+        s.orphaned.boxes = { mons = s.orphaned.mons, moves = s.orphaned.monMoves }
+        s.orphaned.mons = nil
+        s.orphaned.monMoves = nil
+      end
+      if mod.save:get(CURRENT_BOX_KEY) == nil then mod.save:set(CURRENT_BOX_KEY, tonumber(s.currentBox) or 1) end
+      s.currentBox = nil
+    end
     s.version = STORAGE_VERSION
     return true
   end
 
   local function normalizeStorage(decoded)
     local migrated = migrateStorage(decoded)
+    attachEntryProxy(decoded)
+    if type(decoded.orphaned) == "table" then attachOrphanedProxy(decoded.orphaned) end
     local reflowed = Storage.reflowBoxCapacity(decoded)
     Storage.normalizeBoxes(decoded)
     return migrated or reflowed
@@ -228,7 +287,11 @@ function Module.install(mod, File)
   Storage.flushStorage = storage.flushFile
   Storage.replaceStorage = storage.replaceFile
   Storage.resetStorage = storage.resetFile
-  Storage.readBackup = storage.readFileBackup
+  function Storage.readBackup()
+    local decoded = storage.readFileBackup()
+    if type(decoded) == "table" then normalizeStorage(decoded) end
+    return decoded
+  end
   Storage.deleteStorage = storage.deleteFile
 
   function Storage.listBoxes()
@@ -257,6 +320,17 @@ function Module.install(mod, File)
     local n = 0
     for _, count in pairs(orphaned) do n = n + count end
     return n
+  end
+
+  function Storage.currentBox()
+    local s = storage.loadFile()
+    local saved = tonumber(mod.save:get(CURRENT_BOX_KEY, 1)) or 1
+    return math.max(1, math.min(#s.boxes, math.floor(saved)))
+  end
+
+  function Storage.setCurrentBox(n)
+    local s = storage.loadFile()
+    mod.save:set(CURRENT_BOX_KEY, math.max(1, math.min(#s.boxes, math.floor(tonumber(n) or 1))))
   end
 
   function Storage.pcBoxNamesTable()

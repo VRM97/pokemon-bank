@@ -21,7 +21,7 @@ function Pickers.openMonPicker(mod, core, game, opts)
   Boxes.ensure(game.save)
   local loadStorage = core.loadStorage
   local state = {
-    bankBox = loadStorage().currentBox,
+    bankBox = core.currentBox(),
     pcBox = math.max(1, math.min(Boxes.COUNT, game.save.currentBox or 1)),
   }
 
@@ -208,7 +208,7 @@ function Pickers.openBoxPicker(mod, core, game, opts)
   Boxes.ensure(game.save)
   local loadStorage = core.loadStorage
   local state = {
-    bankBox = loadStorage().currentBox,
+    bankBox = core.currentBox(),
     pcBox = math.max(1, math.min(Boxes.COUNT, game.save.currentBox or 1)),
   }
 
