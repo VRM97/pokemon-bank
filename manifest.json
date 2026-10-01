@@ -1,16 +1,16 @@
 {
   "id": "vrm_pokemon_bank",
   "name": "Pokémon Bank",
-  "version": "2.3.0",
+  "version": "3.0.0-beta",
   "api": 2,
   "entry": "main.lua",
   "profile": "content",
   "category": "MECHANIC",
-  "game_version": ">=0.1.86-0 <2.0.0",
+  "game_version": ">=0.2.62-0 <2.0.0",
   "priority": 100,
   "affects_link": false,
   "options_schema": "options.lua",
-  "games": ["gen1", "gen2"],
+  "games": ["gen1", "gen2", "gen3"],
   "permissions": [
     "engine_internals",
     "network"
@@ -18,9 +18,11 @@
   "dependencies": [],
   "optional_dependencies": [
     "CRYSTAL_251",
+    "Kanto-Reforged",
     "infinite_tms",
     "reusable_machines",
     "reusable_machines_gen2",
+    "reusable_machines_gen3",
     "gen1_modern_ui",
     "gen2_clean_ui"
   ],

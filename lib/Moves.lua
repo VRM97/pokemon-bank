@@ -1,10 +1,14 @@
 local V = ...
 
+local Species = V.require("Species")
+local MoveSet = V.require("MoveSet")
+local GenerationMap = V.require("GenerationMap")
+local BoxAccess = V.require("BoxAccess")
+
 local GameVersion = require("src.core.GameVersion")
-local Bag = require("src.inventory.Bag")
-local Boxes = require("src.pokemon.Boxes")
+local Bag = V.require("BagAccess")
+local PcItems = V.require("PcItemAccess")
 local Strings = require("src.core.Strings")
-local Menu = require("src.ui.Menu")
 local Pickers = V.require("Pickers")
 
 local SCREEN_ID = "PokemonBankMoves"
@@ -19,9 +23,40 @@ function Module.install(mod, core)
   local playSound = core.playSound
   local askQuantity = core.askQuantity
 
-  local function isHmItem(id) return type(id) == "string" and id:sub(1, 3):upper() == "HM_" end
+  local function isHmItem(id)
+    if type(id) ~= "string" then return false end
+    id = id:upper()
+    return id:sub(1, 3) == "HM_" or id:find("^HM%d") ~= nil
+  end
+
+  local FIRST_TM_ITEM, TM_COUNT = 288, 50
+
+  local function gen3Machines()
+    local ok, P = pcall(require, "src.core.game3.pokemon")
+    if not (ok and type(P) == "table") then return nil end
+    if not P._tmhm and P.install then pcall(P.install, P._cache) end
+    return P._tmhm and P._tmhm.machines
+  end
+
+  local function gen3TmForMove(moveId)
+    local machines, number = gen3Machines(), MoveSet.toNumber(nil, moveId)
+    if not (machines and number) then return nil end
+    for tm = 1, TM_COUNT do
+      if tonumber(machines[tm - 1]) == number then return Bag.itemName(FIRST_TM_ITEM + tm) end
+    end
+    return nil
+  end
+
+  local function gen3MoveOfTm(id)
+    local item, machines = Bag.itemNumber(id), gen3Machines()
+    local tm = item and item - FIRST_TM_ITEM
+    if not (machines and tm and tm >= 1 and tm <= TM_COUNT) then return nil end
+    local number = tonumber(machines[tm - 1])
+    return number and MoveSet.toText(nil, number)
+  end
 
   local function tmMoveId(id, def)
+    if GameVersion.generation() == 3 then return gen3MoveOfTm(id) end
     if type(def) ~= "table" or isHmItem(id) then return nil end
     if def.machine and def.machine.kind == "TM" and def.machine.move then return def.machine.move end
     if def.teaches then return def.teaches end
@@ -30,6 +65,7 @@ function Module.install(mod, core)
 
   local tmItemIndex
   local function tmItemId(moveId)
+    if GameVersion.generation() == 3 then return gen3TmForMove(moveId) or ("TM_" .. moveId) end
     if not tmItemIndex then
       tmItemIndex = {}
       for id, def in mod.content.items:each() do
@@ -43,32 +79,33 @@ function Module.install(mod, core)
   local function isValidMachine(id, data)
     if type(id) ~= "string" or id == "" then return false end
     if not (data and data.moves and data.moves[id]) then return false end
+    if GameVersion.generation() == 3 then return gen3TmForMove(id) ~= nil end
     local itemDef = data.items and data.items[tmItemId(id)]
     return itemDef ~= nil and tmMoveId(tmItemId(id), itemDef) == id
   end
 
   local function isValidMove(id, data) return type(id) == "string" and id ~= "" and data and data.moves and data.moves[id] ~= nil end
 
-  local function moveCount(id) return loadStorage().moves[id] or 0 end
+  local function moveCount(id) return loadStorage().entries.moves[id] or 0 end
 
   local function depositMove(id, qty)
     qty = math.floor(tonumber(qty) or 0)
     if type(id) ~= "string" or id == "" or qty <= 0 then return false, "bad request" end
-    core.bucketAdd(loadStorage().moves, id, qty)
+    core.bucketAdd(loadStorage().entries.moves, id, qty)
     markDirty()
     return true
   end
 
   local function withdrawMove(id, qty)
     qty = math.floor(tonumber(qty) or 0)
-    if not core.bucketSub(loadStorage().moves, id, qty) then return false, "not enough" end
+    if not core.bucketSub(loadStorage().entries.moves, id, qty) then return false, "not enough" end
     markDirty()
     return true
   end
 
   local function listMoves()
     local out = {}
-    for id, count in pairs(loadStorage().moves) do out[id] = count end
+    for id, count in pairs(loadStorage().entries.moves) do out[id] = count end
     return out
   end
 
@@ -77,7 +114,7 @@ function Module.install(mod, core)
     if not data then return { changed = false, quarantined = 0, restored = 0, lostItems = {}, restoredItems = {}, monMovesRestored = 0 } end
     local s = loadStorage()
     local orphaned = core.ensureOrphaned(s)
-    local result = core.reconcileCountBucket(s.moves, orphaned.moves, function(id) return isValidMove(id, data) end, "POKéMON BANK MOVES")
+    local result = core.reconcileCountBucket(s.entries.moves, orphaned.moves, function(id) return isValidMove(id, data) end, "POKéMON BANK MOVES")
     result.monMovesRestored = autoFillRecoveredMoves(game)
     result.changed = result.quarantined > 0 or result.restored > 0 or result.monMovesRestored > 0
     return result
@@ -86,10 +123,6 @@ function Module.install(mod, core)
   local function listInvalidMoves() return core.listOrphaned("moves") end
 
   local function invalidMoveCount(id) return core.orphanedCount("moves", id) end
-
-  -- =========================================================================
-  -- Move UI
-  -- =========================================================================
 
   local function sortedMoveIds(game, counts, filter) return core.sortedIdsByName(function(id) return core.moveName(game, id) end, counts, filter) end
 
@@ -107,7 +140,13 @@ function Module.install(mod, core)
     return rows
   end
 
+  local GEN3_TYPES = {
+    [0] = "NORMAL", "FIGHTING", "FLYING", "POISON", "GROUND", "ROCK", "BUG", "GHOST", "STEEL", "UNKNOWN",
+    "FIRE", "WATER", "GRASS", "ELECTRIC", "PSYCHIC", "ICE", "DRAGON", "DARK",
+  }
+
   local function typeDisplayName(game, typeId)
+    if type(typeId) == "number" then return GEN3_TYPES[typeId] or "UNKNOWN" end
     local types = game.data.type_chart and game.data.type_chart.types
     local record = types and types[typeId]
     local name = record and record.name or typeId or "UNKNOWN"
@@ -143,9 +182,9 @@ function Module.install(mod, core)
   end
 
   local function moveMoveRows(game, view)
-    if view == "bag" then return tmRowsForBank(game, game.save.inventory) end
-    if view == "pc" then return tmRowsForBank(game, game.save.pcItems) end
-    local counts = loadStorage().moves
+    if view == "bag" then return tmRowsForBank(game, Bag.counts(game)) end
+    if view == "pc" then return tmRowsForBank(game, PcItems.counts(game)) end
+    local counts = loadStorage().entries.moves
     local rows = {}
     for _, id in ipairs(sortedMoveIds(game, counts)) do
       rows[#rows + 1] = { value = id, label = core.truncateName(core.moveName(game, id)), right = "x" .. tostring(counts[id]) }
@@ -218,9 +257,63 @@ function Module.install(mod, core)
     return prev
   end
 
+  local function gen3Engine()
+    local ok, module = pcall(require, "src.core.game3.pokemon")
+    return ok and type(module) == "table" and module or nil
+  end
+
+  local gen3Prevolutions
+
+  local function gen3Prevolution(P, species)
+    if not gen3Prevolutions or gen3Prevolutions.engine ~= P then
+      if not P._names and P.install then pcall(P.install, P._cache) end
+      local reverse = {}
+      for sp in pairs(P._names or {}) do
+        for _, evo in ipairs(P.evolutions(sp)) do
+          local target = tonumber(evo.target or evo[3])
+          if target and target > 0 and reverse[target] == nil then reverse[target] = sp end
+        end
+      end
+      gen3Prevolutions = { engine = P, reverse = reverse }
+    end
+    return gen3Prevolutions.reverse[species]
+  end
+
+  local function gen3SpeciesKnows(P, species, number)
+    for _, entry in ipairs(P.learnset(species)) do
+      if tonumber(entry[2] or entry.move) == number then return true end
+    end
+    if not P._tmhm and P.install then pcall(P.install, P._cache) end
+    local machines = P._tmhm and P._tmhm.machines
+    for index = 0, 57 do
+      if machines and tonumber(machines[index]) == number and P.canLearnTmIndex(species, index) then return true end
+    end
+    return false
+  end
+
+  local function gen3CanLearn(game, mon, moveId)
+    local P, number, species = gen3Engine(), MoveSet.toNumber(game, moveId), Species.number(mon)
+    if not (P and number and species) then return false end
+    local seen = {}
+    while species and not seen[species] do
+      seen[species] = true
+      if gen3SpeciesKnows(P, species, number) then return true end
+      species = gen3Prevolution(P, species)
+    end
+    return false
+  end
+
+  local function moveDef(game, id)
+    local moves = game.data.moves
+    local def = moves[id]
+    if def == nil and GameVersion.generation() == 3 then def = moves[GenerationMap.translateMoveId(id, 3)] end
+    return def
+  end
+
   local function canLearn(game, mon, moveId)
     if type(mon) ~= "table" or mon.isEgg then return false end
-    local species = mon.species
+    if GameVersion.generation() == 3 then return gen3CanLearn(game, mon, moveId) end
+    local species = Species.key(mon)
     local seen = { [species] = true }
     while species do
       if speciesKnowsMove(game.data.pokemon[species], moveId) then return true end
@@ -233,21 +326,98 @@ function Module.install(mod, core)
   end
 
   local function moveTeachContext(game, mon, id)
-    local mdef = game.data.moves[id]
+    local mdef = moveDef(game, id)
     local moveLabel = mdef and mdef.name or id
-    local speciesDef = game.data.pokemon[mon.species]
-    local name = mon.nickname or mon.name or (speciesDef and speciesDef.name) or tostring(mon.species)
+    local speciesDef = game.data.pokemon[Species.key(mon)]
+    local nickname = mon.nickname ~= "" and mon.nickname or nil
+    local name = nickname or mon.name or (speciesDef and speciesDef.name) or tostring(Species.key(mon))
     return mdef, moveLabel, name
   end
 
-  local function knowsMove(mon, id)
+  local function usesNumbers(mon) return GameVersion.generation() == 3 or MoveSet.form(mon.moves) == "number" end
+
+  local function knowsMove(game, mon, id)
+    if usesNumbers(mon) then
+      local number = MoveSet.toNumber(game, id)
+      for _, mv in ipairs(mon.moves or {}) do
+        if mv == number then return true end
+      end
+      return false
+    end
     for _, mv in ipairs(mon.moves or {}) do
       if mv.id == id then return true end
     end
     return false
   end
 
+  local function gen3Teach(mon, number)
+    local P = gen3Engine()
+    if not (P and P.teachMove) then return false end
+    local ok, taught = pcall(P.teachMove, mon, number)
+    return ok and taught == true
+  end
+
+  local function openGen3ForgetMenu(game, mon, number, name, moveLabel, onDone)
+    core.confirm(game, Strings("%s wants to\nlearn %s. Forget\na move?", name, moveLabel), function(yes)
+      if not yes then return onDone(false) end
+      local rows = {}
+      for slot = 1, #mon.moves do
+        local known = MoveSet.toText(game, mon.moves[slot]) or tostring(mon.moves[slot])
+        rows[#rows + 1] = { label = core.truncateName(core.moveName(game, known)), onSelect = function()
+          local P = gen3Engine()
+          local old, why = P.replaceMove(mon, slot, number)
+          if old == nil then
+            core.message(game, why == "hm" and "HM moves can't be\nforgotten." or "It didn't work!")
+            return onDone(false)
+          end
+          onDone(true, Strings("%s learned\n%s!", name, moveLabel))
+        end }
+      end
+      rows[#rows + 1] = { label = "CANCEL", onSelect = function() onDone(false) end }
+      core.rowActionsMenu(game, rows)
+    end, { defaultNo = true, noSound = true })
+  end
+
+  -- The engine's own learn flow (Gen 3): its texts, the yes/no prompts and the summary's "pick the move to forget" mode.
+  local function openGen3EngineLearn(game, mon, number, name, onDone)
+    local okL, LearnMove = pcall(require, "src.core.game3.battle.learn_move")
+    local okS, SummaryMenu = pcall(require, "src.ui.game3.summary_menu")
+    if not (okL and type(LearnMove) == "table" and LearnMove.begin and okS and type(SummaryMenu) == "table" and SummaryMenu.openMenu) then return false end
+    LearnMove.begin({
+      mon = mon, moveId = number, displayName = name,
+      pushMsg = function(text, cb) core.message(game, text, cb) end,
+      askYesNo = function(text, cb) core.confirm(game, text, cb, { noSound = true }) end,
+      askForget = function(_, cb, ctx)
+        local opened = pcall(SummaryMenu.openMenu, { mon }, 1, {
+          mode = "select_move", moveToLearn = ctx and ctx.moveId or number,
+          onSelectMove = function(slotIdx) cb(slotIdx) end,
+        })
+        if not opened then cb(nil) end
+      end,
+      onDone = function(learned) onDone(learned) end,
+    })
+    return true
+  end
+
   local function insertOrOverflowMove(game, mon, moveId, entry, successMsg, onDone, afterLearn)
+    if usesNumbers(mon) then
+      local number = MoveSet.toNumber(game, moveId)
+      if not number then return onDone(false, "It can't be\nlearned here.") end
+      if #mon.moves < 4 and gen3Teach(mon, number) then
+        playSound(game, "Get_Item1")
+        if afterLearn then afterLearn() end
+        return onDone(true, successMsg)
+      end
+      local _, moveLabel, name = moveTeachContext(game, mon, moveId)
+      if openGen3EngineLearn(game, mon, number, name, function(learned)
+        if learned and afterLearn then afterLearn() end
+        onDone(learned)
+      end) then return end
+      return openGen3ForgetMenu(game, mon, number, name, moveLabel, function(learned, msg)
+        if learned and afterLearn then afterLearn() end
+        onDone(learned, msg)
+      end)
+    end
     if #mon.moves < 4 then
       table.insert(mon.moves, entry)
       playSound(game, "Get_Item1")
@@ -261,13 +431,21 @@ function Module.install(mod, core)
     end
   end
 
+  local function syncedOnDone(game, mon, onDone)
+    return function(learned, ...)
+      if learned and MoveSet.sync(game, mon) then core.markDirty() end
+      return onDone(learned, ...)
+    end
+  end
+
   local function attemptTeach(game, mon, moveId, onDone)
+    onDone = syncedOnDone(game, mon, onDone)
     mon.moves = mon.moves or {}
     local mdef, moveLabel, name = moveTeachContext(game, mon, moveId)
     if not canLearn(game, mon, moveId) then
       return onDone(false, Strings("%s can't\nlearn %s!", name, moveLabel))
     end
-    if knowsMove(mon, moveId) then
+    if knowsMove(game, mon, moveId) then
       return onDone(false, Strings("%s already\nknows %s!", name, moveLabel))
     end
     if GameVersion.generation() == 2 then
@@ -277,14 +455,21 @@ function Module.install(mod, core)
       end)
       return
     end
-    insertOrOverflowMove(game, mon, moveId, { id = moveId, pp = mdef.pp },
+    insertOrOverflowMove(game, mon, moveId, { id = moveId, pp = mdef and mdef.pp },
       Strings("%s learned\n%s!", name, moveLabel), onDone, function()
-        pcall(function() require("src.world.PikachuFollower").modifyHappiness(game.save, "USEDTMHM", mon) end)
+        pcall(function()
+          local follower = require("src.world.PikachuFollower")
+          local _ = follower.modifyHappiness and follower.modifyHappiness(game.save, "USEDTMHM", mon)
+        end)
       end)
   end
 
   local function spendMoveUses()
-    return not mod.find("infinite_tms") and not mod.find("reusable_machines") and not mod.find("reusable_machines_gen2")
+    local INFITE_TM_MODS = { "infinite_tms", "reusable_machines", "reusable_machines_gen2", "reusable_machines_gen3" }
+    for _, modId in ipairs(INFITE_TM_MODS) do
+      if mod.find(modId) then return false end
+    end
+    return true
   end
 
   local function openTeachTargetList(game, moveId, onTaught)
@@ -302,10 +487,11 @@ function Module.install(mod, core)
           return
         end
         if spendMoveUses() then
-          core.bucketSub(loadStorage().moves, moveId, 1)
+          core.bucketSub(loadStorage().entries.moves, moveId, 1)
           markDirty()
         end
-        mod.events:emit("mod.vrm_pokemon_bank.move_taught", { id = moveId, mon = mon })
+        core.emitAction("moves", "use", "move_taught", { id = moveId, mon = mon })
+        mod.exports.updateCustomStorageStats(mod.id, "moves", function(stats) stats.taught = stats.taught + 1 end)
         if onTaught then onTaught() end
         if moveCount(moveId) <= 0 then
           handle.close()
@@ -324,27 +510,27 @@ function Module.install(mod, core)
 
   local entryMoveId = core.moveEntryId
 
-  local function recoverableMoves(game, bankId)
-    if bankId == nil then return {} end
+  local function recoverableMoves(game, personality)
+    if personality == nil then return {} end
     local s = loadStorage()
-    local bucket = s.orphaned and s.orphaned.monMoves and s.orphaned.monMoves[bankId]
+    local bucket = s.orphaned and s.orphaned.boxes and s.orphaned.boxes.moves and s.orphaned.boxes.moves[personality]
     if type(bucket) ~= "table" then return {} end
     local out = {}
     for _, mv in ipairs(bucket) do
       local id = entryMoveId(mv)
-      if id and game.data.moves[id] then out[#out + 1] = mv end
+      if id and moveDef(game, id) then out[#out + 1] = mv end
     end
     return out
   end
 
   local function canRelearn(game, mon)
-    if type(mon) ~= "table" or mon.bankId == nil then return false end
-    return #recoverableMoves(game, mon.bankId) > 0
+    if type(mon) ~= "table" or mon.personality == nil then return false end
+    return #recoverableMoves(game, mon.personality) > 0
   end
 
-  local function consumeRecoveredMove(bankId, id)
+  local function consumeRecoveredMove(personality, id)
     local s = loadStorage()
-    local bucket = s.orphaned and s.orphaned.monMoves and s.orphaned.monMoves[bankId]
+    local bucket = s.orphaned and s.orphaned.boxes and s.orphaned.boxes.moves and s.orphaned.boxes.moves[personality]
     if type(bucket) ~= "table" then return end
     for i, mv in ipairs(bucket) do
       if entryMoveId(mv) == id then table.remove(bucket, i) break end
@@ -355,7 +541,7 @@ function Module.install(mod, core)
 
   local function scanMons(game, fn)
     local s = loadStorage()
-    for _, box in ipairs(s.boxes) do
+    for _, box in ipairs(s.entries.boxes) do
       for _, mon in ipairs(box.content) do
         if fn(mon) then return true end
       end
@@ -363,16 +549,13 @@ function Module.install(mod, core)
     for _, mon in ipairs(game.save.party or {}) do
       if fn(mon) then return true end
     end
-    Boxes.ensure(game.save)
-    for _, box in ipairs(game.save.boxes) do
-      for _, mon in ipairs(box) do
+    for _, box in ipairs(BoxAccess.boxes(game)) do
+      for _, mon in BoxAccess.each(box) do
         if fn(mon) then return true end
       end
     end
     return false
   end
-
-  local function hasAnyRelearnable(game) return scanMons(game, function(mon) return canRelearn(game, mon) end) end
 
   local function recoveredMoveEntry(mvEntry, id, mdef)
     local entry = {}
@@ -383,22 +566,28 @@ function Module.install(mod, core)
   end
 
   local function fillMonSlots(game, mon)
-    if type(mon) ~= "table" or mon.bankId == nil then return 0 end
+    if type(mon) ~= "table" or mon.personality == nil then return 0 end
     mon.moves = mon.moves or {}
     local filled = 0
     while #mon.moves < 4 do
-      local moves = recoverableMoves(game, mon.bankId)
+      local moves = recoverableMoves(game, mon.personality)
       if #moves == 0 then break end
       local mvEntry = moves[1]
       local id = entryMoveId(mvEntry)
-      if knowsMove(mon, id) then
-        consumeRecoveredMove(mon.bankId, id)
+      if knowsMove(game, mon, id) then
+        consumeRecoveredMove(mon.personality, id)
+      elseif usesNumbers(mon) then
+        local number = MoveSet.toNumber(game, id)
+        if not (number and gen3Teach(mon, number)) then break end
+        consumeRecoveredMove(mon.personality, id)
+        filled = filled + 1
       else
         table.insert(mon.moves, recoveredMoveEntry(mvEntry, id, game.data.moves[id]))
-        consumeRecoveredMove(mon.bankId, id)
+        consumeRecoveredMove(mon.personality, id)
         filled = filled + 1
       end
     end
+    if filled > 0 and MoveSet.sync(game, mon) then core.markDirty() end
     return filled
   end
 
@@ -412,10 +601,11 @@ function Module.install(mod, core)
   end
 
   local function attemptRelearn(game, mon, mvEntry, onDone)
+    onDone = syncedOnDone(game, mon, onDone)
     mon.moves = mon.moves or {}
     local id = entryMoveId(mvEntry)
     local mdef, moveLabel, name = moveTeachContext(game, mon, id)
-    if knowsMove(mon, id) then return onDone(false, Strings("%s already\nknows %s!", name, moveLabel)) end
+    if knowsMove(game, mon, id) then return onDone(false, Strings("%s already\nknows %s!", name, moveLabel)) end
     if GameVersion.generation() == 2 then
       game:learnMoveOn(mon, id, function(learned) onDone(learned) end)
       return
@@ -425,7 +615,7 @@ function Module.install(mod, core)
 
   local function openRelearnMovesList(game, mon, onClose)
     local function rebuildRows()
-      local moves = recoverableMoves(game, mon.bankId)
+      local moves = recoverableMoves(game, mon.personality)
       local rows = {}
       for _, mv in ipairs(moves) do
         rows[#rows + 1] = { value = mv, label = core.truncateName(core.moveName(game, entryMoveId(mv))) }
@@ -445,7 +635,7 @@ function Module.install(mod, core)
             list.footer = msg
             return
           end
-          consumeRecoveredMove(mon.bankId, entryMoveId(item.value))
+          consumeRecoveredMove(mon.personality, entryMoveId(item.value))
           list.items = rebuildRows()
           list.index = math.min(list.index, math.max(1, #list.items))
           list.footer = msg
@@ -456,194 +646,149 @@ function Module.install(mod, core)
     game.stack:push(screen)
   end
 
-  local function openRelearnTargetList(game)
-    local handle
-    handle = Pickers.openMovePicker(mod, core, game, {
-      compatible = function(mon) return canRelearn(game, mon) end,
-      onChoose = function(mon)
-        if canRelearn(game, mon) then
-          openRelearnMovesList(game, mon, function() handle.refresh() end)
-        else
-          handle.setFooter("It has nothing\nto remember.")
-        end
-      end,
-    })
+  Moves.canRelearn = canRelearn
+  Moves.openRelearn = openRelearnMovesList
+
+  local ALL_TYPES = "ALL"
+
+  local function bagStore(game, view) return view == "pc" and PcItems.counts(game) or Bag.counts(game) end
+
+  local function rowMoveId(game, view, row)
+    if row == nil then return nil end
+    if view == "bank" then return row end
+    return tmMoveId(row, game.data.items[row])
   end
 
-  local function buildManageMovesScreen(game)
-    game.save.pcItems = game.save.pcItems or {}
-    local state = { moveType = "ALL" }
-    local group
-
-    local function cycleMoveType(delta)
-      local avail = availableMoveTypes(game, state.view)
-      local nextType = core.cycleCategory(state.moveType, avail, delta)
-      if nextType == state.moveType then return end
-      state.moveType = nextType
-      group.rebuild()
+  local function rowsForType(game, view, pageId)
+    local rows = moveMoveRows(game, view)
+    if pageId == nil or pageId == ALL_TYPES then return rows end
+    local filtered = {}
+    for _, row in ipairs(rows) do
+      if Moves.moveTypeOf(game, moveMoveIdOf(view, row)) == pageId then filtered[#filtered + 1] = row end
     end
+    return filtered
+  end
 
-    local function startTeach(moveId)
-      if moveCount(moveId) <= 0 then
-        group.screen.list.footer = "The selection changed."
-        return
-      end
-      openTeachTargetList(game, moveId, function() group.rebuild(true) end)
+  local function startTeach(game, moveId, rebuild, list, env)
+    if moveCount(moveId) <= 0 then
+      core.currentList(env, list).footer = "The selection changed."
+      return
     end
+    openTeachTargetList(game, moveId, function() rebuild(true) end)
+  end
 
-    local function startWithdraw(moveId)
-      if not isValidMachine(moveId, game.data) then
-        group.screen.list.footer = "There's no TM\nfor that move!"
-        return
-      end
-      local count = moveCount(moveId)
-      if count <= 0 then
-        group.screen.list.footer = "The selection changed."
-        return
-      end
-      askQuantity(game, group.screen.list, count, function(qty)
-        local itemId = tmItemId(moveId)
-        if not Bag.add(game.save, itemId, qty, game.data) then
-          group.screen.list.footer = "You can't carry\nany more items."
-          return
-        end
-        withdrawMove(moveId, qty)
-        mod.events:emit("mod.vrm_pokemon_bank.move_withdrawn", { id = moveId, qty = qty })
-        playSound(game, "Withdraw_Deposit")
-        group.rebuild(true)
-        group.screen.list.footer = Strings("Withdrew\n%s.", core.itemName(game, itemId))
-      end)
-    end
-
-    local function startDeposit(view, itemId, moveId)
-      local store = view == "pc" and game.save.pcItems or game.save.inventory
-      local count = store[itemId]
-      if not (moveId and count and count > 0) then
-        group.screen.list.footer = "The selection changed."
-        return
-      end
-      askQuantity(game, group.screen.list, count, function(qty)
-        if view == "pc" then
-          core.bucketSub(store, itemId, qty)
-        else Bag.remove(game.save, itemId, qty) end
-        depositMove(moveId, qty)
-        mod.events:emit("mod.vrm_pokemon_bank.move_deposited", { id = moveId, qty = qty })
-        playSound(game, "Withdraw_Deposit")
-        group.rebuild(true)
-        group.screen.list.footer = Strings("%s was\nstored in BANK.", core.moveName(game, moveId))
-      end)
-    end
-
-    local function startToss(view, item, moveId)
-      local name = core.moveName(game, moveId)
-      if view == "bank" then
-        core.confirmTossQuantity(game, group.screen.list, {
-          count = moveCount(moveId),
-          name = name,
-          onToss = function(qty)
-            withdrawMove(moveId, qty)
-            mod.events:emit("mod.vrm_pokemon_bank.move_tossed", { id = moveId, qty = qty })
-          end,
-          rebuild = function() group.rebuild(true) end,
-        })
-      else
-        local itemId = item.value
-        local store = view == "pc" and game.save.pcItems or game.save.inventory
-        core.confirmTossQuantity(game, group.screen.list, {
-          count = store[itemId],
-          name = name,
-          onToss = function(qty)
-            if view == "pc" then
-              core.bucketSub(store, itemId, qty)
-            else Bag.remove(game.save, itemId, qty) end
-          end,
-          rebuild = function() group.rebuild(true) end,
-        })
-      end
-    end
-
-    local function openMoveRowActions(view, item)
-      local moveId = moveMoveIdOf(view, item)
-      local rows = {}
-      if moveCount(moveId) > 0 then
-        rows[#rows + 1] = { label = "TEACH", onSelect = function() startTeach(moveId) end }
-      end
-      if view == "bank" then
-        rows[#rows + 1] = { label = "WITHDRAW", onSelect = function() startWithdraw(moveId) end }
-      else
-        rows[#rows + 1] = { label = "DEPOSIT", onSelect = function() startDeposit(view, item.value, moveId) end }
-      end
-      rows[#rows + 1] = { label = "TOSS", onSelect = function() startToss(view, item, moveId) end }
-      rows[#rows + 1] = { label = "CANCEL" }
-      core.rowActionsMenu(game, rows)
-    end
-
-    local function filteredMoveRows(view)
-      local rows = moveMoveRows(game, view)
-      if state.moveType == "ALL" then return rows end
-      local filtered = {}
-      for _, row in ipairs(rows) do
-        if Moves.moveTypeOf(game, moveMoveIdOf(view, row)) == state.moveType then filtered[#filtered + 1] = row end
-      end
-      return filtered
-    end
-
-    local function startMoveAll()
-      local view = state.view
-      local rows = filteredMoveRows(view)
-      core.confirmBulkMoveAll(game, {
-        count = #rows,
-        verb = view == "bank" and "Withdraw" or "Deposit",
-        resultVerb = view == "bank" and "Withdrew" or "Deposited",
-        noun = "moves",
-        run = function()
-          local moved, refused = 0, 0
-          if view == "bank" then
-            for _, row in ipairs(rows) do
-              local moveId = row.value
-              local count = moveCount(moveId)
-              if count > 0 and isValidMachine(moveId, game.data) and Bag.add(game.save, tmItemId(moveId), count, game.data) then
-                withdrawMove(moveId, count)
-                mod.events:emit("mod.vrm_pokemon_bank.move_withdrawn", { id = moveId, qty = count })
-                moved = moved + 1
-              else
-                refused = refused + 1
-              end
-            end
-          else
-            local store = view == "pc" and game.save.pcItems or game.save.inventory
-            for _, row in ipairs(rows) do
-              local itemId, moveId = row.value, row.moveId
-              local count = store[itemId]
-              if moveId and count and count > 0 then
-                if view == "pc" then store[itemId] = nil else Bag.remove(game.save, itemId, count) end
-                depositMove(moveId, count)
-                mod.events:emit("mod.vrm_pokemon_bank.move_deposited", { id = moveId, qty = count })
-                moved = moved + 1
-              else
-                refused = refused + 1
-              end
-            end
-          end
-          return moved, refused
+  local function startToss(game, view, row, moveId, rebuild, list, env)
+    local name = core.moveName(game, moveId)
+    local function liveList() return core.currentList(env, list) end
+    if view == "bank" then
+      core.confirmTossQuantity(game, list, {
+        liveList = liveList,
+        count = moveCount(moveId),
+        name = name,
+        onToss = function(qty)
+          withdrawMove(moveId, qty)
+          core.emitAction("moves", "remove", "move_tossed", { id = moveId, qty = qty })
         end,
-        rebuild = function() group.rebuild(true) end,
-        setFooter = function(msg) group.screen.list.footer = msg end,
+        rebuild = function() rebuild(true) end,
+      })
+    else
+      local store = bagStore(game, view)
+      core.confirmTossQuantity(game, list, {
+        liveList = liveList,
+        count = store[row],
+        name = name,
+        onToss = function(qty)
+          if view == "pc" then
+            core.bucketSub(store, row, qty)
+          else Bag.remove(game.save, row, qty) end
+        end,
+        rebuild = function() rebuild(true) end,
       })
     end
+  end
 
-    group = core.listGroup(game, {
-      counter = true,
-      views = { "bank", "bag", "pc" },
-      state = state,
-      label = pageLabel,
-      title = function(view)
-        local base = pageLabel(view)
-        if state.moveType == "ALL" then return base end
-        return Strings("%s (%s)", base, state.moveType)
+  local function transferMove(game, srcView, destView, row, qty)
+    local itemId, moveId, count
+    if srcView == "bank" then
+      moveId, count = row, moveCount(row)
+      if count > 0 and not isValidMachine(moveId, game.data) then return false, "There's no TM\nfor that move!" end
+      itemId = tmItemId(moveId)
+    else
+      itemId, moveId, count = row, rowMoveId(game, srcView, row), bagStore(game, srcView)[row]
+    end
+    if not (moveId and count and count > 0) then return false, "The selection changed." end
+    qty = math.min(qty or count, count)
+    if destView == "bag" then
+      if not Bag.add(game.save, itemId, qty, game.data) then return false, "You can't carry\nany more items." end
+    elseif destView == "pc" then
+      if PcItems.full(game, itemId, qty) then return false, "No room left to\nstore items." end
+      PcItems.add(game, itemId, qty)
+    end
+    if srcView == "bank" then
+      withdrawMove(moveId, qty)
+      core.emitAction("moves", "withdraw", "move_withdrawn", { id = moveId, qty = qty })
+    elseif srcView == "pc" then
+      PcItems.remove(game, itemId, qty)
+    else
+      Bag.remove(game.save, itemId, qty)
+    end
+    if destView == "bank" then
+      depositMove(moveId, qty)
+      core.emitAction("moves", "deposit", "move_deposited", { id = moveId, qty = qty })
+    end
+    local msg
+    if destView == "bank" then msg = Strings("%s was\nstored in BANK.", core.moveName(game, moveId))
+    else msg = Strings("Withdrew\n%s.", core.itemName(game, itemId)) end
+    return true, msg
+  end
+
+  local function startTransfer(game, srcView, destView, row, rebuild, list, env)
+    local count = srcView == "bank" and moveCount(row) or bagStore(game, srcView)[row]
+    if not (count and count > 0) then
+      core.currentList(env, list).footer = "The selection changed."
+      return
+    end
+    askQuantity(game, list, count, function(qty)
+      local ok, msg = transferMove(game, srcView, destView, row, qty)
+      if ok then playSound(game, "Withdraw_Deposit") end
+      rebuild(true)
+      core.currentList(env, list).footer = msg
+    end)
+  end
+
+  local VIEW_LABEL = { bank = "BANK", bag = "BAG", pc = "PC" }
+
+  local function transferRow(view)
+    local targets = {}
+    for _, dest in ipairs({ "bank", "bag", "pc" }) do
+      if dest ~= view then
+        targets[#targets + 1] = { label = "TO " .. VIEW_LABEL[dest], onSelect = function(game, _, row, rebuild, list, env) startTransfer(game, view, dest, row, rebuild, list, env) end }
+      end
+    end
+    return core.transferGroup(targets)
+  end
+
+  local function makeMoveContainer(view)
+    local label = pageLabel(view)
+    local container = {
+      id = view, label = label,
+      getPages = function(game)
+        local types = availableMoveTypes(game, view)
+        local pages = { { id = ALL_TYPES, label = ALL_TYPES } }
+        if #types - 1 >= 2 then
+          for i = 2, #types do pages[#pages + 1] = { id = types[i], label = types[i] } end
+        end
+        return pages
       end,
-      dynamicFooter = function(view, item, nextLabel)
-        local id = moveMoveIdOf(view, item)
+      title = function(_, pageId)
+        if pageId == nil or pageId == ALL_TYPES then return label end
+        return Strings("%s (%s)", label, pageId)
+      end,
+      build = function(game, pageId)
+        return rowsForType(game, view, pageId), { messageBox = true, noSound = true, wrap = true }
+      end,
+      dynamicFooter = function(game, _, row, nextLabel)
+        local id = rowMoveId(game, view, row)
         local detail = Moves.moveDetailLine(game, id)
         local pp = Moves.movePpText(game, id)
         local selectLine = nextLabel and ("SELECT: " .. nextLabel) or nil
@@ -651,54 +796,41 @@ function Module.install(mod, core)
         if not line2 then return detail end
         return (detail or "") .. "\n" .. line2
       end,
-      build = function(view)
-        local avail = availableMoveTypes(game, view)
-        state.moveType = core.resetCategoryIfStale(state.moveType, avail)
-        return filteredMoveRows(view), {
-          messageBox = true, noSound = true, wrap = true,
-          onChoose = function(item) openMoveRowActions(view, item) end,
-        }
-      end,
-      extraKeys = function(input)
-        if input:wasPressed("left") then cycleMoveType(-1); return true end
-        if input:wasPressed("right") then cycleMoveType(1); return true end
-        if input:wasPressed("start") then startMoveAll(); return true end
-        return false
-      end,
-      modernUi = {
-        left = function() cycleMoveType(-1) end,
-        right = function() cycleMoveType(1) end,
+      canTransfer = true,
+      canListPages = true,
+      listPagesLabel = "TYPES",
+      canWithdraw = false,
+      withdraw = function(game, _, row, destView) return (transferMove(game, view, destView, row)) end,
+      deposit = function() end,
+      onAction = {
+        { label = "TEACH",
+          visible = function(game, _, row) return moveCount(rowMoveId(game, view, row)) > 0 end,
+          onSelect = function(game, _, row, rebuild, list, env) startTeach(game, rowMoveId(game, view, row), rebuild, list, env) end },
+        transferRow(view),
+        { label = "TOSS", onSelect = function(game, _, row, rebuild, list, env)
+          startToss(game, view, row, rowMoveId(game, view, row), rebuild, list, env)
+        end },
       },
-    })
-
-    return group.screen
-  end
-
-  local function openManageMovesScreen(game)
-    game.stack:push(buildManageMovesScreen(game))
-  end
-
-  local function BankMoveMenu(game)
-    if not hasAnyRelearnable(game) then return buildManageMovesScreen(game) end
-    local rows = {
-      { label = "MANAGE MOVES", keepOpen = true, onSelect = function() openManageMovesScreen(game) end },
-      { label = "RELEARN MOVE", keepOpen = true, onSelect = function() openRelearnTargetList(game) end },
-      { label = "CANCEL" },
     }
-    return Menu.new(game, rows, { tx = 0, ty = 0, tw = 16, th = #rows * 2 + 2, noSound = true })
+    return container
   end
+
+  Moves.containers = { makeMoveContainer("bank"), makeMoveContainer("bag"), makeMoveContainer("pc") }
+
+  local function buildManageMovesScreen(game)
+    return core.entryScreen(game, Moves.containers, { counter = true })
+  end
+
+  local function BankMoveMenu(game) return buildManageMovesScreen(game) end
 
   mod.content.screens:register(SCREEN_ID, { new = BankMoveMenu })
 
-  local movesTab = core.makeTabToggle("show_moves_tab")
-  Moves.tabEnabled = movesTab.enabled
+  local movesTab = core.entryTab("moves", "show_moves_tab")
+  Moves.tabEnabled = movesTab.shown
 
-  -- =========================================================================
-  -- Public API for other mods. See API.md for the full reference.
-  -- =========================================================================
-  mod.exports.depositMove = core.emitOnSuccess(depositMove, "mod.vrm_pokemon_bank.move_deposited", core.idQtyPayload)
-  mod.exports.withdrawMove = core.emitOnSuccess(withdrawMove, "mod.vrm_pokemon_bank.move_withdrawn", core.idQtyPayload)
-  mod.exports.tossMove = core.emitOnSuccess(withdrawMove, "mod.vrm_pokemon_bank.move_tossed", core.idQtyPayload)
+  mod.exports.depositMove = core.emitOnSuccess(depositMove, "moves", "deposit", "move_deposited", core.idQtyPayload)
+  mod.exports.withdrawMove = core.emitOnSuccess(withdrawMove, "moves", "withdraw", "move_withdrawn", core.idQtyPayload)
+  mod.exports.tossMove = core.emitOnSuccess(withdrawMove, "moves", "remove", "move_tossed", core.idQtyPayload)
   mod.exports.moveCount = moveCount
   mod.exports.listMoves = listMoves
   mod.exports.isValidMachine = function(id, game) return isValidMachine(id, game and game.data) end

@@ -1,22 +1,22 @@
 local V = ...
 
+local Species = V.require("Species")
+local BoxAccess = V.require("BoxAccess")
+local BagAccess = V.require("BagAccess")
+local MoveSet = V.require("MoveSet")
+
 local GameVersion = require("src.core.GameVersion")
 local Strings = require("src.core.Strings")
-local Menu = require("src.ui.Menu")
-local ListMenu = require("src.ui.ListMenu")
-local Boxes = require("src.pokemon.Boxes")
 local Party = require("src.pokemon.Party")
 local GenerationMap = V.require("GenerationMap")
-local Pickers = V.require("Pickers")
 
 local SCREEN_ID = "PokemonBankTimeCapsule"
-local WITHDRAW_SCREEN_ID = "PokemonBankTimeCapsuleWithdraw"
--- The highest generation this recomp currently has a playable game for. A Pokémon can only ever move forward across this ladder, never back down it
-local MAX_SUPPORTED_GENERATION = 2
+local MAX_SUPPORTED_GENERATION = 3
 local DEPOSIT_REFUSAL = {
   egg = "An EGG can't go\nin TIME CAPSULE.",
   held_item = "Remove its held\nitem first.",
   no_next_generation = "There's nowhere\nfurther to go.",
+  origin = "It's from a newer\ngeneration.",
   illegal = "It's not legal to\ndeposit right now.",
 }
 local WITHDRAW_REFUSAL = {
@@ -35,6 +35,25 @@ local CATCH_RATE_ITEM_OVERRIDES = {
   [190] = "BERRY",
   [255] = "BERRY",
 }
+local GEN3_ITEM_BY_CATCH_RATE = {
+  [3] = "BRIGHTPOWDER",
+  [9] = "ANTIDOTE",
+  [25] = "LEFTOVERS",
+  [27] = "PROTEIN",
+  [30] = "LUCKY_PUNCH",
+  [35] = "METAL_POWDER",
+  [45] = "PERSIM_BERRY",
+  [50] = "SITRUS_BERRY",
+  [65] = "ELIXIR",
+  [90] = "ORAN_BERRY",
+  [96] = "TWISTEDSPOON",
+  [100] = "ORAN_BERRY",
+  [120] = "ORAN_BERRY",
+  [150] = "LEPPA_BERRY",
+  [163] = "LIGHT_BALL",
+  [190] = "ORAN_BERRY",
+  [255] = "ORAN_BERRY",
+}
 local YELLOW_ITEM_BYTE_OVERRIDES = {
   PIKACHU = 163,
   KADABRA = 96,
@@ -50,8 +69,9 @@ function Module.install(mod, core, Pokemon)
 
   local TimeCapsule = { screenId = SCREEN_ID }
   local markDirty = core.markDirty
+  local loadStorage = core.loadStorage
 
-  local function capsuleMons() return core.loadStorage().timeCapsule end
+  local function capsuleMons() return loadStorage().entries.timeCapsule end
 
   local function legalityMode()
     local v = mod.options:get("legality_checks")
@@ -72,6 +92,7 @@ function Module.install(mod, core, Pokemon)
     if mon.isEgg then return false, "egg" end
     if mon.item or mon.heldItem then return false, "held_item" end
     if GameVersion.generation() >= MAX_SUPPORTED_GENERATION then return false, "no_next_generation" end
+    if (tonumber(mon.originGeneration) or GameVersion.generation()) > GameVersion.generation() then return false, "origin" end
     if not legalityCheckPasses(mon, game) then return false, "illegal" end
     return true
   end
@@ -80,9 +101,9 @@ function Module.install(mod, core, Pokemon)
     if loc.view == "bank" then
       return Pokemon.withdrawMon(loc.box, loc.index) == mon
     elseif loc.view == "pc" then
-      local box = game.save.boxes[loc.box]
+      local box = BoxAccess.box(game, loc.box)
       if not box or box[loc.index] ~= mon then return false end
-      table.remove(box, loc.index)
+      BoxAccess.take(box, loc.index)
       return true
     else
       local party = game.save.party
@@ -110,6 +131,27 @@ function Module.install(mod, core, Pokemon)
     return nil
   end
 
+  local function gen3ItemName(ref)
+    local number = ref and BagAccess.itemNumber(ref)
+    return number and number ~= 0 and BagAccess.itemName(number) or nil
+  end
+
+  local function gen3WildItem(game, mon)
+    local ok, P = pcall(require, "src.core.game3.pokemon")
+    if not (ok and type(P) == "table" and P.speciesMeta) then return nil end
+    local meta = P.speciesMeta(Species.number(mon) or Species.toNumber(game, Species.key(mon)))
+    if not meta then return nil end
+    local common, rare = tonumber(meta.itemCommon) or 0, tonumber(meta.itemRare) or 0
+    return gen3ItemName(common ~= 0 and common or rare ~= 0 and rare or nil)
+  end
+
+  local function arrivalItem(game, mon)
+    local generation = GameVersion.generation()
+    if generation == 2 then return itemIdForByte(game, mon.timeCapsuleItemByte) end
+    if generation ~= 3 then return nil end
+    return gen3ItemName(GEN3_ITEM_BY_CATCH_RATE[mon.timeCapsuleItemByte]) or gen3WildItem(game, mon)
+  end
+
   function TimeCapsule.validateStorage(game)
     local data = game and game.data
     if not data then return { changed = false, quarantined = 0, restored = 0, lostMons = {}, restoredMons = {} } end
@@ -126,7 +168,7 @@ function Module.install(mod, core, Pokemon)
         table.remove(mons, idx)
         orphaned.timeCapsule[#orphaned.timeCapsule + 1] = mon
         quarantined = quarantined + 1
-        lostMons[#lostMons + 1] = { species = mon.species, from = "TIME CAPSULE" }
+        lostMons[#lostMons + 1] = { species = Species.key(mon), from = "TIME CAPSULE" }
       else
         reshape(game, mon)
         markDirty()
@@ -139,7 +181,7 @@ function Module.install(mod, core, Pokemon)
         reshape(game, mon)
         mons[#mons + 1] = mon
         restored = restored + 1
-        restoredMons[#restoredMons + 1] = { species = mon.species, to = "TIME CAPSULE" }
+        restoredMons[#restoredMons + 1] = { species = Species.key(mon), to = "TIME CAPSULE" }
       end
     end
     return {
@@ -151,36 +193,58 @@ function Module.install(mod, core, Pokemon)
     }
   end
 
-  local function openDepositPicker(game)
-    local handle
-    handle = Pickers.openMonPicker(mod, core, game, {
-      dynamicFooter = function(mon, view, nextLabel)
-        local speciesLine = mon and Pokemon.speciesName(game, mon) or ""
-        local selectLine = nextLabel and ("SELECT: " .. nextLabel) or ""
-        return speciesLine .. "\n" .. selectLine
-      end,
-      onChoose = function(mon, loc)
-        local ok, reason = canDeposit(mon, game)
-        if not ok then
-          handle.setFooter(DEPOSIT_REFUSAL[reason] or "It didn't work!")
-          return
-        end
-        if not removeFromSource(game, loc, mon) then
-          handle.setFooter("The selection changed.")
-          return
-        end
-        mon.minGeneration = GameVersion.generation() + 1
-        mon.timeCapsuleItemByte = timeCapsuleItemByte(game, mon.species)
-        table.insert(capsuleMons(), mon)
-        markDirty()
-        core.playSound(game, "Withdraw_Deposit")
-        handle.refresh()
-        handle.setFooter("Sent to the\nTIME CAPSULE!")
-      end,
-    })
+  local function performDepositIntoCapsule(game, srcView, boxNum, index)
+    local mon = srcView == "bank" and loadStorage().entries.boxes[boxNum].content[index] or srcView == "pc" and BoxAccess.box(game, boxNum)[index] or game.save.party[index]
+    if not mon then return false, nil, "It didn't work!" end
+    local ok, reason = canDeposit(mon, game)
+    if not ok then return false, nil, DEPOSIT_REFUSAL[reason] or "It didn't work!" end
+    if not removeFromSource(game, { view = srcView, box = boxNum, index = index }, mon) then return false, nil, "The selection changed." end
+    mon.minGeneration = GameVersion.generation() + 1
+    mon.timeCapsuleItemByte = GameVersion.generation() == 1 and timeCapsuleItemByte(game, Species.key(mon)) or nil
+    table.insert(capsuleMons(), mon)
+    markDirty()
+    core.emitAction("timeCapsule", "deposit", nil, { mon = mon })
+    if srcView == "bank" then core.emitAction("boxes", "withdraw", nil, { mon = mon }) end
+    return true, mon, "Sent to the\nTIME CAPSULE!"
   end
 
-  local function eligibleForWithdraw(mon) return GameVersion.generation() >= (mon.minGeneration or 0) end
+  local function checkWithdraw(game, mon)
+    if GameVersion.generation() < (mon.minGeneration or 0) then return false, "generation" end
+    if GameVersion.generation() == 3 then mon.fatefulEncounter = true end
+    Species.setText(mon, GenerationMap.translateSpeciesId(Species.key(mon)))
+    if type(mon.moves) == "table" then
+      for _, mv in ipairs(mon.moves) do
+        if type(mv) == "table" and mv.id then mv.id = GenerationMap.translateMoveId(mv.id) end
+      end
+    end
+
+    if not game.data.pokemon[Species.key(mon)] then return false, "species" end
+    if type(mon.moves) == "table" then
+      for _, mv in ipairs(mon.moves) do
+        local id = type(mv) == "number" and MoveSet.toText(game, mv) or core.moveEntryId(mv)
+        local known = id and (type(mv) == "number" or (game.data.moves and game.data.moves[id] ~= nil))
+        if not known then return false, "move" end
+      end
+    end
+
+    if not legalityCheckPasses(mon, game) then
+      if legalityMode() == "force_fix" and tryFix(mon, game) then return true end
+      return false, "illegal"
+    end
+    return true
+  end
+
+  local function commitWithdraw(game, mon)
+    if mod.exports.registerDex then mod.exports.registerDex(game, Species.key(mon)) end
+    if not (mon.item or mon.heldItem) then
+      local item = arrivalItem(game, mon)
+      if item then
+        BagAccess.setHeldItem(mon, item)
+      end
+    end
+    mon.timeCapsuleItemByte = nil
+    mon.minGeneration = GameVersion.generation()
+  end
 
   local function placeInto(game, view, boxNum, mon)
     if view == "bank" then
@@ -193,297 +257,195 @@ function Module.install(mod, core, Pokemon)
       table.insert(game.save.party, mon)
       return true
     end
-    Boxes.ensure(game.save)
-    for off = 0, Boxes.COUNT - 1 do
-      local i = ((boxNum - 1 + off) % Boxes.COUNT) + 1
-      local box = game.save.boxes[i]
-      if #box < Boxes.CAPACITY then
-        table.insert(box, mon)
-        return true
-      end
+    local count = BoxAccess.count()
+    for off = 0, count - 1 do
+      local i = ((boxNum - 1 + off) % count) + 1
+      if BoxAccess.insert(BoxAccess.box(game, i), mon) then return true end
     end
     return false
-  end
-
-  local function checkWithdraw(game, mon)
-    if GameVersion.generation() < (mon.minGeneration or 0) then return false, "generation" end
-    mon.species = GenerationMap.translateSpeciesId(mon.species)
-    if type(mon.moves) == "table" then
-      for _, mv in ipairs(mon.moves) do
-        if type(mv) == "table" and mv.id then mv.id = GenerationMap.translateMoveId(mv.id) end
-      end
-    end
-
-    if not game.data.pokemon[mon.species] then return false, "species" end
-    if type(mon.moves) == "table" then
-      for _, mv in ipairs(mon.moves) do
-        local id = core.moveEntryId(mv)
-        local proxy = { species = mon.species, isEgg = false }
-        if not (mod.exports.canLearn and mod.exports.canLearn(game, proxy, id)) then
-          return false, "move"
-        end
-      end
-    end
-
-    if not legalityCheckPasses(mon, game) then
-      if legalityMode() == "force_fix" and tryFix(mon, game) then return true end
-      return false, "illegal"
-    end
-    return true
-  end
-
-  local function commitWithdraw(game, mon)
-    if mod.exports.registerDex then mod.exports.registerDex(game, mon.species) end
-    if not (mon.item or mon.heldItem) then
-      local item = itemIdForByte(game, mon.timeCapsuleItemByte)
-      if item then mon.item = item end
-    end
-    mon.timeCapsuleItemByte = nil
-    mon.minGeneration = GameVersion.generation()
   end
 
   local function destinationHasRoom(game, view, boxNum)
     if view == "bank" then return true end
     if view == "party" then return #game.save.party < Party.MAX end
-    Boxes.ensure(game.save)
-    for off = 0, Boxes.COUNT - 1 do
-      local i = ((boxNum - 1 + off) % Boxes.COUNT) + 1
-      if #game.save.boxes[i] < Boxes.CAPACITY then return true end
+    local count = BoxAccess.count()
+    for off = 0, count - 1 do
+      local i = ((boxNum - 1 + off) % count) + 1
+      if not BoxAccess.isFull(BoxAccess.box(game, i)) then return true end
     end
     return false
   end
 
-  local function openWithdrawList(game)
-    local list
-    local screen = { isOpaque = true, screenId = WITHDRAW_SCREEN_ID }
+  local function checkWithdrawOnce(game, index)
+    local mon = capsuleMons()[index]
+    if not mon then return nil, "It didn't work!" end
+    local ok, reason = checkWithdraw(game, mon)
+    if not ok then return nil, WITHDRAW_REFUSAL[reason] or "It didn't work!" end
+    return mon
+  end
 
-    local function refresh(preserveCursor)
-      local oldIndex = preserveCursor and list and list.index
-      local rows = {}
-      for i, mon in ipairs(capsuleMons()) do
-        rows[#rows + 1] = { label = core.monName(game, mon), value = i }
-      end
-      if list then
-        list.items = rows
-        core.attachLevelIcons(list, capsuleMons())
-        if oldIndex then core.setListCursor(list, oldIndex) end
-      end
-      return rows
+  local function commitWithdrawTo(game, index, mon, destView, destBox)
+    if capsuleMons()[index] ~= mon then return false, "The selection changed." end
+    if not destinationHasRoom(game, destView, destBox) then return false, "There's no room\nthere." end
+    commitWithdraw(game, mon)
+    if not placeInto(game, destView, destBox, mon) then return false, "It didn't work!" end
+    table.remove(capsuleMons(), index)
+    markDirty()
+    core.emitAction("timeCapsule", "withdraw", nil, { mon = mon })
+    return true
+  end
+
+  local function finishWithdrawTo(game, index, mon, destView, destBox, rebuild, list, env)
+    local ok, msg = commitWithdrawTo(game, index, mon, destView, destBox)
+    rebuild(true)
+    if ok then
+      core.playSound(game, "Withdraw_Deposit")
+      core.currentList(env, list).footer = "Transferred!"
+    else
+      core.currentList(env, list).footer = msg
     end
+  end
 
-    local function checkWithdrawOnce(index)
-      local mon = capsuleMons()[index]
-      if not mon then return nil, "It didn't work!" end
-      local ok, reason = checkWithdraw(game, mon)
-      if not ok then return nil, WITHDRAW_REFUSAL[reason] or "It didn't work!" end
-      return mon
-    end
-
-    local function commitWithdrawTo(index, mon, destView, destBox)
-      if capsuleMons()[index] ~= mon then return false, "The selection changed." end
-      if not destinationHasRoom(game, destView, destBox) then return false, "There's no room\nthere." end
-      commitWithdraw(game, mon)
-      if not placeInto(game, destView, destBox, mon) then return false, "It didn't work!" end
+  local function releaseCapsuleMon(game, index, mon, rebuild, list, env)
+    local name = core.monName(game, mon)
+    core.confirmRelease(game, name, function(yes)
+      if not yes then return end
+      if capsuleMons()[index] ~= mon then
+        rebuild(true)
+        core.currentList(env, list).footer = "The selection changed."
+        return
+      end
       table.remove(capsuleMons(), index)
       markDirty()
-      return true
-    end
+      core.emitAction("timeCapsule", "remove", "pokemon_released", { box = nil, index = index, mon = mon })
+      core.playCry(game, Species.key(mon))
+      rebuild(true)
+      core.message(game, Strings("%s was\nreleased.\fBye %s!", name, name))
+    end)
+  end
 
-    local function finishWithdrawTo(index, mon, destView, destBox)
-      local ok, msg = commitWithdrawTo(index, mon, destView, destBox)
-      if ok then
-        core.playSound(game, "Withdraw_Deposit")
-        refresh(true)
-        list.footer = "Transferred!"
-      else
-        refresh(true)
-        list.footer = msg
-      end
-    end
+  local function bulkWithdrawFromCapsule(game, _, row, destView, env)
+    local destBox = env.pageOf(destView)
+    local mon = checkWithdrawOnce(game, row)
+    if not mon then return false end
+    return commitWithdrawTo(game, row, mon, destView, destBox) and true or false
+  end
 
-    local function attemptWithdrawTo(index, destView)
-      local destBox
-      if destView == "pc" then destBox = game.save.currentBox or 1
-      elseif destView == "bank" then destBox = core.currentBox()
-      end
-      local mon, msg = checkWithdrawOnce(index)
+  local function fromExistingContainer(base, overrides)
+    local out = {}
+    for k, v in pairs(base) do out[k] = v end
+    for k, v in pairs(overrides) do out[k] = v end
+    out.onStart = nil
+    out.canListPages = nil
+    out.listPagesActions = nil
+    out.listPagesColumns, out.listPagesIcon, out.listPagesOnStart, out.listPagesFooter = nil, nil, nil, nil
+    out.canRearrangePages = nil
+    out.onMovePage = nil
+    out.onMove = nil
+    out.canRearrange = nil
+    out.canRearrangeBetweenPages = nil
+    out.columns = nil
+    out.icon = nil
+    return out
+  end
+
+  local function depositActionRow(srcView)
+    return { label = "TO TIME CAPSULE", onSelect = function(game, pageId, row, rebuild, list, env)
+      local ok, _, msg = performDepositIntoCapsule(game, srcView, pageId, row)
+      if ok then core.playSound(game, "Withdraw_Deposit") end
+      rebuild(true)
+      core.currentList(env, list).footer = msg
+    end }
+  end
+
+  local function statsRowAt(getMon)
+    return { label = "STATS", keepOpen = true, onSelect = function(game, pageId, row)
+      local mon = getMon(game, pageId, row)
+      if mon then core.openSummary(game, mon) end
+    end }
+  end
+
+  local function withdrawOnSelect(destView)
+    return function(game, _, row, rebuild, list, env)
+      local destBox = env.pageOf(destView)
+      local mon, msg = checkWithdrawOnce(game, row)
       if mon then
-        finishWithdrawTo(index, mon, destView, destBox)
+        finishWithdrawTo(game, row, mon, destView, destBox, rebuild, list, env)
         return
       end
       if msg == WITHDRAW_REFUSAL.illegal and legalityMode() == "fix" then
-        local target = capsuleMons()[index]
+        local target = capsuleMons()[row]
         core.confirm(game, "This POKéMON\nneeds to be fixed.\nOK?", function(yes)
           if yes and target and tryFix(target, game) then
-            finishWithdrawTo(index, target, destView, destBox)
+            finishWithdrawTo(game, row, target, destView, destBox, rebuild, list, env)
           else
-            refresh(true)
-            list.footer = msg
+            rebuild(true)
+            core.currentList(env, list).footer = msg
           end
         end, { defaultNo = true, noSound = true })
         return
       end
-      refresh(true)
-      list.footer = msg
+      rebuild(true)
+      core.currentList(env, list).footer = msg
     end
+  end
 
-    local function releaseCurrent(index, mon)
-      local name = core.monName(game, mon)
-      core.confirmRelease(game, name, function(yes)
-        if not yes then return end
-        if capsuleMons()[index] ~= mon then
-          list.footer = "The selection changed."
-          return
-        end
-        table.remove(capsuleMons(), index)
-        markDirty()
-        -- box is nil (TIME CAPSULE has none); VIEW STATS' own RELEASE
-        -- count only listens for the event firing, not this payload
-        mod.events:emit("mod.vrm_pokemon_bank.pokemon_released", { box = nil, index = index, mon = mon })
-        core.playCry(game, mon.species)
-        refresh(true)
-        core.message(game, Strings("%s was\nreleased.\fBye %s!", name, name))
-      end)
-    end
+  local timeCapsuleContainer = {
+    id = "capsule", label = "TIME CAPSULE",
+    build = function(game)
+      local rows, mons = {}, {}
+      for i, mon in ipairs(capsuleMons()) do rows[i], mons[i] = { label = core.monName(game, mon), value = i }, mon end
+      return rows, { messageBox = true, noSound = true, wrap = true }, mons
+    end,
+    dynamicFooter = function(game, _, row, nextLabel)
+      local mon = capsuleMons()[row]
+      return Strings("%s\nSELECT: %s", mon and Pokemon.speciesName(game, mon) or "", nextLabel)
+    end,
+    canTransfer = true,
+    canWithdraw = false,
+    withdraw = bulkWithdrawFromCapsule,
+    deposit = function() end,
+    onAction = {
+      core.transferGroup({
+        { label = "TO BANK", visible = function() return Pokemon.tabEnabled() end, onSelect = withdrawOnSelect("bank") },
+        { label = "TO PARTY", onSelect = withdrawOnSelect("party") },
+        { label = "TO PC", onSelect = withdrawOnSelect("pc") },
+      }),
+      statsRowAt(function(_, _, row) return capsuleMons()[row] end),
+      { label = "RELEASE", onSelect = function(game, _, row, rebuild, list, env)
+          local mon = capsuleMons()[row]
+          if mon then releaseCapsuleMon(game, row, mon, rebuild, list, env) end
+        end },
+    },
+  }
 
-    local function openMonActions(index)
-      local mon = capsuleMons()[index]
-      if not mon then return end
-      local rows = {}
-      local function appendRow(label, onSelect, keepOpen) rows[#rows + 1] = { label = label, onSelect = onSelect, keepOpen = keepOpen } end
-      if mod.options:get("storage_mode") ~= "time_capsule" then appendRow("TO BANK", function() attemptWithdrawTo(index, "bank") end) end
-      appendRow("TO PARTY", function() attemptWithdrawTo(index, "party") end)
-      appendRow("TO PC", function() attemptWithdrawTo(index, "pc") end)
-      appendRow("STATS", function() core.openSummary(game, mon) end, true)
-      appendRow("RELEASE", function() releaseCurrent(index, mon) end)
-      appendRow("CANCEL")
-      core.rowActionsMenu(game, rows)
-    end
+  local bankForCapsule = fromExistingContainer(Pokemon.containers[1], {
+    canTransfer = false, withdraw = false, deposit = function() end,
+    onAction = { depositActionRow("bank"), statsRowAt(function(_, pageId, row) return loadStorage().entries.boxes[pageId].content[row] end) },
+  })
+  local partyForCapsule = fromExistingContainer(Pokemon.containers[2], {
+    canTransfer = false, withdraw = false, deposit = function() end,
+    onAction = { depositActionRow("party"), statsRowAt(function(game, _, row) return game.save.party[row] end) },
+  })
+  local pcForCapsule = fromExistingContainer(Pokemon.containers[3], {
+    canTransfer = false, withdraw = false, deposit = function() end,
+    onAction = { depositActionRow("pc"), statsRowAt(function(game, pageId, row) return BoxAccess.box(game, pageId)[row] end) },
+  })
 
-    local function startWithdrawAll()
-      local eligible = {}
-      for i, mon in ipairs(capsuleMons()) do
-        if eligibleForWithdraw(mon) then eligible[#eligible + 1] = i end
-      end
-      if #eligible == 0 then return end
-      core.confirm(game, Strings("Transfer all %d\nPOKéMON?", #eligible), function(yes)
-        if not yes then return end
-        Pickers.openBoxPicker(mod, core, game, {
-          requireNonEmpty = false,
-          hideBank = mod.options:get("storage_mode") == "time_capsule",
-          onChoose = function(view, boxNum)
-            game.stack:pop()
-            local ready, needingFix, refused = {}, {}, 0
-            for _, idx in ipairs(eligible) do
-              local mon, msg = checkWithdrawOnce(idx)
-              if mon then
-                ready[#ready + 1] = idx
-              elseif msg == WITHDRAW_REFUSAL.illegal and legalityMode() == "fix" then
-                needingFix[#needingFix + 1] = idx
-              else refused = refused + 1 end
-            end
-            local function finish(toCommit, refusedCount)
-              local order = {}
-              for _, idx in ipairs(toCommit) do order[#order + 1] = idx end
-              table.sort(order, function(a, b) return a > b end)
-              local moved = 0
-              for _, idx in ipairs(order) do
-                local mon = capsuleMons()[idx]
-                if mon and commitWithdrawTo(idx, mon, view, boxNum) then moved = moved + 1 else refusedCount = refusedCount + 1 end
-              end
-              if moved > 0 then core.playSound(game, "Withdraw_Deposit") end
-              refresh(true)
-              local footerMsg
-              if moved == 0 then
-                footerMsg = refusedCount > 0 and Strings("Nothing moved,\n%d refused.", refusedCount) or "Nothing moved."
-              elseif refusedCount == 0 then
-                footerMsg = Strings("Transferred %d\nPOKéMON.", moved)
-              else footerMsg = Strings("Transferred %d,\n%d refused.", moved, refusedCount) end
-              list.footer = footerMsg
-            end
-            if #needingFix == 0 then
-              finish(ready, refused)
-              return
-            end
-            core.confirm(game, Strings("%d POKéMON need\nto be fixed. OK?", #needingFix), function(fixYes)
-              local toCommit = ready
-              local extraRefused = 0
-              for _, idx in ipairs(needingFix) do
-                local mon = capsuleMons()[idx]
-                if fixYes and mon and tryFix(mon, game) then
-                  toCommit[#toCommit + 1] = idx
-                else extraRefused = extraRefused + 1 end
-              end
-              finish(toCommit, refused + extraRefused)
-            end, { defaultNo = true, noSound = true })
-          end,
-        })
-      end, { defaultNo = true, noSound = true })
-    end
-
-    list = ListMenu.new(game, "TIME CAPSULE", refresh(), {
-      messageBox = true, noSound = true, wrap = true,
-      onChoose = function(item) openMonActions(item.value) end,
+  local function TimeCapsuleScreen(game)
+    return core.entryScreen(game, { timeCapsuleContainer, bankForCapsule, partyForCapsule, pcForCapsule }, {
+      screenId = SCREEN_ID,
+      counter = true,
     })
-    core.attachLevelIcons(list, capsuleMons())
-    core.attachDynamicFooter(list, function(l)
-      local item = l.items[l.index]
-      local mon = item and capsuleMons()[item.value]
-      local speciesLine = mon and Pokemon.speciesName(game, mon) or ""
-      return speciesLine .. "\nA: PICK  ST: ALL"
-    end)
-
-    function screen:update(dt)
-      local input = game.input
-      if input:wasPressed("start") then
-        startWithdrawAll()
-        return
-      elseif input:wasPressed("b") then
-        game.stack:pop()
-        return
-      end
-      list:update(dt)
-    end
-
-    function screen:draw()
-      list:draw()
-      core.drawListTitle(list)
-      core.drawListCounter(list)
-    end
-
-    game.stack:push(screen)
   end
+  mod.content.screens:register(SCREEN_ID, { new = TimeCapsuleScreen })
 
-  local function TimeCapsuleMenu(game)
-    local rows = {
-      { label = "DEPOSIT <PK><MN>", keepOpen = true, onSelect = function() openDepositPicker(game) end },
-      { label = "WITHDRAW <PK><MN>", keepOpen = true, onSelect = function() openWithdrawList(game) end },
-      { label = "CANCEL" },
-    }
-    local menu = Menu.new(game, rows, { tx = 0, ty = 0, tw = 14, th = #rows * 2 + 2, noSound = true })
-    local screen = { isOpaque = false }
-    function screen:update(dt) menu:update(dt) end
-    function screen:draw()
-      menu:draw()
-      local Font = require("src.render.Font")
-      local text = Strings("CAPSULE: %d", #capsuleMons())
-      local tw = math.floor(Font.width(text) / 8) + 3
-      local tx, ty = 20 - tw, 15
-      Font.drawBox(tx, ty, tw, 3)
-      love.graphics.setColor(0, 0, 0, 1)
-      Font.draw(text, (tx + 2) * 8, (ty + 1) * 8)
-      love.graphics.setColor(1, 1, 1, 1)
-    end
-    return screen
-  end
-  mod.content.screens:register(SCREEN_ID, { new = TimeCapsuleMenu })
+  local timeCapsuleTab = core.entryTab("timeCapsule", "show_time_capsule_tab")
+  TimeCapsule.tabEnabled = timeCapsuleTab.shown
 
-  -- =========================================================================
-  -- Public API for other mods. See API.md for the full reference.
-  -- =========================================================================
   mod.exports.timeCapsuleScreenId = SCREEN_ID
-  mod.exports.timeCapsuleWithdrawScreenId = WITHDRAW_SCREEN_ID
-  mod.exports.isTimeCapsuleEnabled = function() return mod.options:get("storage_mode") ~= "bank" end
+  mod.exports.isTimeCapsuleTabEnabled = TimeCapsule.tabEnabled
+  mod.exports.setTimeCapsuleTabEnabled = timeCapsuleTab.setEnabled
   mod.exports.timeCapsulePokemonCount = function() return #capsuleMons() end
   mod.exports.listTimeCapsulePokemon = function()
     local out = {}

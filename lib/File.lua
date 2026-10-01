@@ -1,5 +1,3 @@
-local V = ...
-
 local SaveData = require("src.core.SaveData")
 local SaveSerializer = require("src.core.SaveSerializer")
 
@@ -80,14 +78,15 @@ function Module.new(mod, filename, freshFile, onFileLoad)
     return File.replaceFile(decoded)
   end
 
-  function File.readFileBackup()
-    return Module.readDecoded(BACKUP)
-  end
+  function File.readFileBackup() return Module.readDecoded(BACKUP) end
+
+  function File.hasFileBackup() return (Module.readDecoded(TMP) or Module.readDecoded(BACKUP)) ~= nil end
 
   function File.restoreFileBackup()
     local decoded = Module.readDecoded(TMP) or Module.readDecoded(BACKUP)
     if not decoded then return false end
     File.replaceFile(decoded)
+    return true
   end
 
   function File.reloadFile()

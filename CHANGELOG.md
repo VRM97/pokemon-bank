@@ -1,5 +1,58 @@
 # Changelog
 
+## Unreleased
+
+New export: `markDirty()`, to save a Pokémon another mod edited in place.
+
+## 3.0.0
+
+**Added Gen 3 support**: Every stored Pokémon gets a personality value (PID), and a Secret ID; the trainer gets an SID when the save has none. A Pokémon's stats are calculated again when it crosses between Gen 1/2 and Gen 3. IVs and DVs, and EVs and Stat Exp, convert into each other when a Pokémon crosses between Gen 1/2 and Gen 3.
+
+**Kanto Reforged support**: Allow transfer data between mod and Gen 3.
+
+New (casino) **COINS**.
+
+**TIME CAPSULE reaches Gen 3**: Gen 1 and Gen 2 Pokémon can be sent through it to a Gen 3 save, where they come out marked as a fateful encounter and with a held item.
+
+**LEGALITY CHECKS on Gen 3**: a full set of checks and fixes for Gen 3 Pokémon (IVs, EVs, PID and its correlation with the IVs, moves, PP, ball, where it was met, ...).
+
+**Box and item grids**: POKéMON and ITEMS (on Gen 3) now show 6 icons per row, and MANAGE BOX shows its boxes the same way, with the name and fill of the highlighted one in the footer. Can be toggled off/on by pressing START > LIST/GRID VIEW.
+
+A Pokémon holding an item can send it straight to the BANK, BAG or PC. Pressing START > ITEMS does it for the whole box or party at once.
+
+**Custom storages**: other mods can now register their own storage inside the BANK. Each one gets its own data files, is covered by DELETE DATA and RESTORE DATA, and can shows up in LINK.
+
+A Pokémon holding an item is marked in the lists with the party menu's own held-item icon.
+
+Catches on Gen 1 and Gen 2 now record the level and the ball they were caught with.
+
+Another mod can open the screen a storage registered for itself, whether it is a custom screen or a plain list of containers.
+
+LINK now warns before confirming an offer too big to send in one go.
+
+### Changes
+- The POKéMON and TIME CAPSULE tabs only show once the player has got the POKéDEX.
+- TIME CAPSULE only takes a Pokémon in the generation it was caught in or a later one: one caught in a newer generation is refused.
+- Added `50` and `100` to **BOX SIZE**. Default is now `30`.
+- ITEMS now filters by pocket on Gen 1 too (ITEMS, BALLS, KEY ITEMS and TM/HM, like Gen 2), with Left/Right, POCKETS and MOVE within a pocket. The bag itself is unchanged.
+- **Bumped LINK version to 8**.
+- A different data version of one storage no longer cancels the whole LINK: only that storage's row is unavailable.
+- The receiving side's LOST view is now a single list, like VIEW LOST, instead of three separate views.
+- **VIEW STATS** is now paginated. Left/Right changes the page and SELECT switches between BANK and PLAYER totals.
+- **RELEARN** is now a choice on the Pokémon itself in POKéMON, shown only while it has a move waiting to come back.
+- RELEARN MOVES now finds a Pokémon by its personality value instead of the old BANK id, which is removed.
+
+### Fixes
+- A Bank Pokémon whose moves changed (RELEARN MOVES, a TM, another mod) kept the other-generation ids of its old moves, which could bring back a forgotten move when it crossed generations: they now follow its moves.
+- On Gen 1 and Gen 2, a START menu list longer than the screen went past the screen's edge; it now scrolls.
+- Fixing a Pokémon with LEGALITY CHECKS on FIX could fail with an error when the fix didn't work out.
+
+### Options
+- **TIME CAPSULE MENU**: a SHOW/HIDE toggle for the TIME CAPSULE tab, independent of POKéMON MENU.
+- **COINS MENU**: a SHOW/HIDE toggle for the COINS tab, default ON. The tab only shows once the player has got the COIN CASE.
+- A SHOW/HIDE tab toggle for each storage another mod registers.
+- Removed the **STORAGE MODE** option.
+
 ## 2.3.0
 
 `storage.lua` bumped to **version 7**: BOXES, ITEMS, MOVES, MONEY and TIME CAPSULE now live grouped together instead of as separate top-level fields. Nothing changes from the UI or from any other mod's integration with the Bank.
@@ -14,8 +67,7 @@ A Pokémon's cross-generation shaping (held item field, stats, gender, status, a
 
 ## 2.1.2
 
-### Fixes
-- Withdrawing a single Pokémon from TIME CAPSULE straight to BANK crashed the game instead of storing it.
+Withdrawing a single Pokémon from TIME CAPSULE straight to BANK crashed the game instead of storing it.
 
 ## 2.1.1
 

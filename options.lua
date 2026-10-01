@@ -20,6 +20,14 @@ return {
     offHint = "Tab is hidden."
   },
   {
+    key = "show_time_capsule_tab",
+    label = "TIME CAPSULE MENU",
+    type = "toggle",
+    default = true,
+    onHint = "Tab shows up.",
+    offHint = "Tab is hidden."
+  },
+  {
     key = "show_items_tab",
     label = "ITEMS MENU",
     type = "toggle",
@@ -44,6 +52,14 @@ return {
     offHint = "Tab is hidden."
   },
   {
+    key = "show_coins_tab",
+    label = "COINS MENU",
+    type = "toggle",
+    default = true,
+    onHint = "Tab shows up.",
+    offHint = "Tab is hidden."
+  },
+  {
     key = "show_link_tab",
     label = "LINK MENU",
     type = "toggle",
@@ -55,10 +71,12 @@ return {
     key = "box_size",
     label = "BOX SIZE",
     type = "choice",
-    default = "20",
+    default = "30",
     choices = {
       { "20", "20", "Holds 20\nPOKéMON per box." },
       { "30", "30", "Holds 30\nPOKéMON per box." },
+      { "50", "50", "Holds 50\nPOKéMON per box." },
+      { "100", "100", "Holds 100\nPOKéMON per box." },
       { "NO LIMIT", "-1", "No limit on\nPOKéMON per box." },
     }
   },
@@ -91,17 +109,6 @@ return {
       { "FIX", "fix", "Asks to fix an\nillegal POKéMON." },
       { "FORCE FIX", "force_fix", "Fixes it without\nasking first." },
       { "REJECT", "reject", "Refuses an\nillegal POKéMON." },
-    }
-  },
-  {
-    key = "storage_mode",
-    label = "STORAGE MODE",
-    type = "choice",
-    default = "bank",
-    choices = {
-      { "BANK", "bank", "Only MANAGE\n<PK><MN> shows." },
-      { "TIME CAPSULE", "time_capsule", "Only TIME\nCAPSULE shows." },
-      { "BOTH", "both", "Chooser: <PK><MN>,\nBOX, CAPSULE." },
     }
   },
   {

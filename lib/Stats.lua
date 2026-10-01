@@ -1,393 +1,351 @@
-local V = ...
-
 local SCREEN_ID = "PokemonBankStats"
-local STATS_VERSION = 1
 local SAVE_KEY = "stats"
+
+local ACTION_FIELD = { deposit = "deposited", withdraw = "withdrawn", remove = "removed", use = false }
 
 local Module = {}
 
-function Module.install(mod, core, File)
-  local Stats = {
-    STATS_VERSION = STATS_VERSION,
-    screenId = SCREEN_ID,
-  }
+function Module.install(mod, core, CustomStorage)
+  local Stats = { screenId = SCREEN_ID }
+  local QTY_FORMATS = CustomStorage.QTY_FORMATS
 
-  local function freshLinkCartTotals()
-    return { pokemon = 0, items = 0, moves = 0, money = 0 }
-  end
+  local record = CustomStorage.getCustomStorage(mod.id)
+  local stats = record.statsFile
 
-  local function freshCounters()
-    return {
-      transactions = 0,
-      pokemon = {
-        deposited = 0,
-        withdrawn = 0,
-        released = 0
-      },
-      items = {
-        depositedOps = 0,
-        depositedQty = 0,
-        withdrawnOps = 0,
-        withdrawnQty = 0,
-        tossedOps = 0,
-        tossedQty = 0
-      },
-      moves = {
-        depositedOps = 0,
-        depositedQty = 0,
-        withdrawnOps = 0,
-        withdrawnQty = 0,
-        taught = 0
-      },
-      money = {
-        depositedOps = 0,
-        depositedTotal = 0,
-        withdrawnOps = 0,
-        withdrawnTotal = 0
-      },
-      link = {
-        completed = 0,
-        cancelled = 0,
-        sent = freshLinkCartTotals(),
-        received = freshLinkCartTotals()
-      },
-    }
-  end
+  local function num(v, default) return math.max(0, math.floor(tonumber(v) or default or 0)) end
 
-  local function freshStats()
-    local s = freshCounters()
-    s.version = STATS_VERSION
-    s.peakMoney = 0
-    s.species = {}
-    return s
-  end
-
-  local function num(v, default)
-    return math.max(0, math.floor(tonumber(v) or default or 0))
-  end
-
-  local function normalizeCounters(c)
-    c.transactions = num(c.transactions)
-    c.pokemon = type(c.pokemon) == "table" and c.pokemon or {}
-    c.pokemon.deposited = num(c.pokemon.deposited)
-    c.pokemon.withdrawn = num(c.pokemon.withdrawn)
-    c.pokemon.released = num(c.pokemon.released)
-    c.items = type(c.items) == "table" and c.items or {}
-    for _, key in ipairs({ "depositedOps", "depositedQty", "withdrawnOps", "withdrawnQty", "tossedOps", "tossedQty" }) do
-      c.items[key] = num(c.items[key])
-    end
-    c.moves = type(c.moves) == "table" and c.moves or {}
-    for _, key in ipairs({ "depositedOps", "depositedQty", "withdrawnOps", "withdrawnQty", "taught" }) do
-      c.moves[key] = num(c.moves[key])
-    end
-    c.money = type(c.money) == "table" and c.money or {}
-    for _, key in ipairs({ "depositedOps", "depositedTotal", "withdrawnOps", "withdrawnTotal" }) do
-      c.money[key] = num(c.money[key])
-    end
-    c.link = type(c.link) == "table" and c.link or {}
-    c.link.completed = num(c.link.completed)
-    c.link.cancelled = num(c.link.cancelled)
-    for _, side in ipairs({ "sent", "received" }) do
-      c.link[side] = type(c.link[side]) == "table" and c.link[side] or {}
-      for _, key in ipairs({ "pokemon", "items", "moves", "money" }) do
-        c.link[side][key] = num(c.link[side][key])
-      end
-    end
-    return c
-  end
-
-  local function normalizeStats(s)
-    normalizeCounters(s)
-    s.version = STATS_VERSION
-    s.peakMoney = num(s.peakMoney)
-    local species = type(s.species) == "table" and s.species or {}
-    local clean = {}
-    for id, count in pairs(species) do
-      if type(id) == "string" and count and count > 0 then clean[id] = num(count) end
-    end
-    s.species = clean
-    return s
-  end
-
-  local stats = File.new(mod, "stats.lua", freshStats, normalizeStats)
-
-  local function saveCounters()
-    local s = mod.save:get(SAVE_KEY)
-    if type(s) ~= "table" then
-      s = freshCounters()
-      mod.save:set(SAVE_KEY, s)
-    end
-    normalizeCounters(s)
-    return s
-  end
-
-  local function bumpSpecies(species)
-    if species == nil then return end
-    local g = stats.loadFile()
-    local id = tostring(species)
-    g.species[id] = (g.species[id] or 0) + 1
-  end
-
-  local function bumpTransaction()
-    local g, s = stats.loadFile(), saveCounters()
-    g.transactions, s.transactions = g.transactions + 1, s.transactions + 1
-    return g, s
-  end
-
-  mod.events:on("mod.vrm_pokemon_bank.pokemon_deposited", function(ev)
-    local g, s = bumpTransaction()
-    g.pokemon.deposited, s.pokemon.deposited = g.pokemon.deposited + 1, s.pokemon.deposited + 1
-    bumpSpecies(ev and ev.mon and ev.mon.species)
-    stats.markDirty()
-  end)
-
-  mod.events:on("mod.vrm_pokemon_bank.pokemon_withdrawn", function()
-    local g, s = bumpTransaction()
-    g.pokemon.withdrawn, s.pokemon.withdrawn = g.pokemon.withdrawn + 1, s.pokemon.withdrawn + 1
-    stats.markDirty()
-  end)
-
-  mod.events:on("mod.vrm_pokemon_bank.pokemon_released", function()
-    local g, s = bumpTransaction()
-    g.pokemon.released, s.pokemon.released = g.pokemon.released + 1, s.pokemon.released + 1
-    stats.markDirty()
-  end)
-
-  mod.events:on("mod.vrm_pokemon_bank.item_deposited", function(ev)
-    local qty = num(ev and ev.qty)
-    local g, s = bumpTransaction()
-    g.items.depositedOps, s.items.depositedOps = g.items.depositedOps + 1, s.items.depositedOps + 1
-    g.items.depositedQty, s.items.depositedQty = g.items.depositedQty + qty, s.items.depositedQty + qty
-    stats.markDirty()
-  end)
-
-  mod.events:on("mod.vrm_pokemon_bank.item_withdrawn", function(ev)
-    local qty = num(ev and ev.qty)
-    local g, s = bumpTransaction()
-    g.items.withdrawnOps, s.items.withdrawnOps = g.items.withdrawnOps + 1, s.items.withdrawnOps + 1
-    g.items.withdrawnQty, s.items.withdrawnQty = g.items.withdrawnQty + qty, s.items.withdrawnQty + qty
-    stats.markDirty()
-  end)
-
-  mod.events:on("mod.vrm_pokemon_bank.item_tossed", function(ev)
-    local qty = num(ev and ev.qty)
-    local g, s = bumpTransaction()
-    g.items.tossedOps, s.items.tossedOps = g.items.tossedOps + 1, s.items.tossedOps + 1
-    g.items.tossedQty, s.items.tossedQty = g.items.tossedQty + qty, s.items.tossedQty + qty
-    stats.markDirty()
-  end)
-
-  mod.events:on("mod.vrm_pokemon_bank.move_deposited", function(ev)
-    local qty = num(ev and ev.qty)
-    local g, s = bumpTransaction()
-    g.moves.depositedOps, s.moves.depositedOps = g.moves.depositedOps + 1, s.moves.depositedOps + 1
-    g.moves.depositedQty, s.moves.depositedQty = g.moves.depositedQty + qty, s.moves.depositedQty + qty
-    stats.markDirty()
-  end)
-
-  mod.events:on("mod.vrm_pokemon_bank.move_withdrawn", function(ev)
-    local qty = num(ev and ev.qty)
-    local g, s = bumpTransaction()
-    g.moves.withdrawnOps, s.moves.withdrawnOps = g.moves.withdrawnOps + 1, s.moves.withdrawnOps + 1
-    g.moves.withdrawnQty, s.moves.withdrawnQty = g.moves.withdrawnQty + qty, s.moves.withdrawnQty + qty
-    stats.markDirty()
-  end)
-
-  mod.events:on("mod.vrm_pokemon_bank.move_taught", function()
-    local g, s = bumpTransaction()
-    g.moves.taught, s.moves.taught = g.moves.taught + 1, s.moves.taught + 1
-    stats.markDirty()
-  end)
-
-  mod.events:on("mod.vrm_pokemon_bank.money_deposited", function(ev)
-    local amount = num(ev and ev.amount)
-    local g, s = bumpTransaction()
-    g.money.depositedOps, s.money.depositedOps = g.money.depositedOps + 1, s.money.depositedOps + 1
-    g.money.depositedTotal, s.money.depositedTotal = g.money.depositedTotal + amount, s.money.depositedTotal + amount
-    local balance = core.loadStorage().money or 0
-    if balance > g.peakMoney then g.peakMoney = balance end
-    stats.markDirty()
-  end)
-
-  mod.events:on("mod.vrm_pokemon_bank.money_withdrawn", function(ev)
-    local amount = num(ev and ev.amount)
-    local g, s = bumpTransaction()
-    g.money.withdrawnOps, s.money.withdrawnOps = g.money.withdrawnOps + 1, s.money.withdrawnOps + 1
-    g.money.withdrawnTotal, s.money.withdrawnTotal = g.money.withdrawnTotal + amount, s.money.withdrawnTotal + amount
-    stats.markDirty()
-  end)
-
-  mod.events:on("mod.vrm_pokemon_bank.link_completed", function(ev)
-    local g, s = bumpTransaction()
-    g.link.completed, s.link.completed = g.link.completed + 1, s.link.completed + 1
-    for _, side in ipairs({ "sent", "received" }) do
-      local counts = ev and ev[side]
-      for _, key in ipairs({ "pokemon", "items", "moves", "money" }) do
-        local v = num(counts and counts[key])
-        g.link[side][key], s.link[side][key] = g.link[side][key] + v, s.link[side][key] + v
-      end
-    end
-    stats.markDirty()
-  end)
-
-  mod.events:on("mod.vrm_pokemon_bank.link_cancelled", function()
-    local g, s = stats.loadFile(), saveCounters()
-    g.link.cancelled, s.link.cancelled = g.link.cancelled + 1, s.link.cancelled + 1
-    stats.markDirty()
-  end)
-
-  local function copyCounters(c)
-    return {
-      transactions = c.transactions,
-      pokemon = { deposited = c.pokemon.deposited, withdrawn = c.pokemon.withdrawn, released = c.pokemon.released },
-      items = {
-        depositedOps = c.items.depositedOps, depositedQty = c.items.depositedQty,
-        withdrawnOps = c.items.withdrawnOps, withdrawnQty = c.items.withdrawnQty,
-        tossedOps = c.items.tossedOps, tossedQty = c.items.tossedQty,
-      },
-      moves = {
-        depositedOps = c.moves.depositedOps, depositedQty = c.moves.depositedQty,
-        withdrawnOps = c.moves.withdrawnOps, withdrawnQty = c.moves.withdrawnQty,
-        taught = c.moves.taught,
-      },
-      money = {
-        depositedOps = c.money.depositedOps, depositedTotal = c.money.depositedTotal,
-        withdrawnOps = c.money.withdrawnOps, withdrawnTotal = c.money.withdrawnTotal,
-      },
-      link = {
-        completed = c.link.completed, cancelled = c.link.cancelled,
-        sent = { pokemon = c.link.sent.pokemon, items = c.link.sent.items, moves = c.link.sent.moves, money = c.link.sent.money },
-        received = { pokemon = c.link.received.pokemon, items = c.link.received.items, moves = c.link.received.moves, money = c.link.received.money },
-      },
-    }
-  end
-
-  local function getGlobalStats()
-    local g = stats.loadFile()
-    local out = copyCounters(g)
-    out.peakMoney = g.peakMoney
-    out.species = {}
-    for id, count in pairs(g.species) do out.species[id] = count end
+  local function deepCopy(v)
+    if type(v) ~= "table" then return v end
+    local out = {}
+    for k, x in pairs(v) do out[k] = deepCopy(x) end
     return out
   end
 
-  local function getSaveStats()
-    return copyCounters(saveCounters())
+  local function ensureLinkSessions(s)
+    if type(s.linkSessions) ~= "table" then s.linkSessions = { completed = 0, cancelled = 0 } end
+    s.linkSessions.completed = num(s.linkSessions.completed)
+    s.linkSessions.cancelled = num(s.linkSessions.cancelled)
+    return s
   end
 
-  local function topSpecies()
-    local g = stats.loadFile()
-    local bestId, bestCount = nil, 0
-    for id, count in pairs(g.species) do
-      if count > bestCount then bestId, bestCount = id, count end
+  local function loadGlobal() return ensureLinkSessions(stats.loadFile()) end
+
+  local function entryOf(id, key)
+    local r = CustomStorage.getCustomStorage(id)
+    local index = r and r.entryIndex[key]
+    return r, index and r.entries[index] or nil
+  end
+
+  local function saveStats()
+    local s = mod.save:get(SAVE_KEY)
+    if type(s) ~= "table" then
+      s = {}
+      mod.save:set(SAVE_KEY, s)
     end
-    return bestId, bestCount
+    if type(s.basic) ~= "table" then s.basic = {} end
+    if type(s.own) ~= "table" then
+      local extra = type(s.extra) == "table" and s.extra or nil
+      local old = type(s.entries) == "table" and s.entries or {}
+      local boxes, moves = type(old.boxes) == "table" and old.boxes or {}, type(old.moves) == "table" and old.moves or {}
+      s.own = { [mod.id] = {
+        boxes = { species = extra and extra.species or boxes.species },
+        moves = { taught = extra and extra.taught or moves.taught },
+      } }
+      s.extra = nil
+    end
+    return ensureLinkSessions(s)
   end
 
-  local function fmtMoney(n) return ("¥%d"):format(n) end
+  local function takeLegacy(s, id, key)
+    local root = id == mod.id and s.entries or (type(s.custom) == "table" and s.custom[id]) or nil
+    if type(root) ~= "table" then return nil end
+    local legacy = root[key]
+    root[key] = nil
+    if next(root) == nil then
+      if id == mod.id then s.entries = nil else s.custom[id] = nil end
+    end
+    if type(s.custom) == "table" and next(s.custom) == nil then s.custom = nil end
+    return legacy
+  end
+
+  local function saveCounters(id, entry)
+    local s = saveStats()
+    if type(s.basic[id]) ~= "table" then s.basic[id] = {} end
+    local v = s.basic[id][entry.key]
+    local legacy = type(v) ~= "table" and takeLegacy(s, id, entry.key) or nil
+    s.basic[id][entry.key] = (CustomStorage.normalizeBasic(v, legacy, entry.storageFormat))
+    return s.basic[id][entry.key]
+  end
+
+  local function counters(r, entry) return r.statsFile.loadFile().basic[entry.key], saveCounters(r.id, entry) end
+
+  local function ownSave(id, entry)
+    local s = saveStats()
+    if type(s.own[id]) ~= "table" then s.own[id] = {} end
+    local v = s.own[id][entry.key]
+    if v == nil then v = CustomStorage.safeCall(entry.freshStats) or {} end
+    local normalized = CustomStorage.safeCall(entry.normalizeStats, v)
+    s.own[id][entry.key] = normalized ~= nil and normalized or v
+    return s.own[id][entry.key]
+  end
+
+  local function ownOf(r, entry, scope)
+    if scope == "player" then return ownSave(r.id, entry) end
+    return r.statsFile.loadFile().entries[entry.key]
+  end
+
+  local function getOwnStats(id, key, scope)
+    local r, entry = entryOf(id, key)
+    if not entry then return nil end
+    return ownOf(r, entry, scope)
+  end
+
+  local function setOwnStats(id, key, value, scope)
+    local r, entry = entryOf(id, key)
+    if not r then return false, "unknown custom storage" end
+    if not entry then return false, "unknown entry" end
+    if scope == "player" then
+      saveStats().own[id][key] = value
+    else
+      r.statsFile.loadFile().entries[key] = value
+      r.statsFile.markDirty()
+    end
+    return true
+  end
+
+  local function updateOwnStats(id, key, update)
+    local r, entry = entryOf(id, key)
+    if not r then return false, "unknown custom storage" end
+    if not entry then return false, "unknown entry" end
+    if type(update) ~= "function" then return false, "update must be a function" end
+    for _, scope in ipairs({ "bank", "player" }) do
+      local value = ownOf(r, entry, scope)
+      local ok, result = pcall(update, value, scope)
+      if not ok then
+        mod.log:warn("custom storage %s: stats update failed: %s", id, tostring(result))
+        return false, "update failed"
+      end
+      if type(result) == "table" then setOwnStats(id, key, result, scope) end
+    end
+    r.statsFile.markDirty()
+    return true
+  end
+
+  local function raisePeak(r, entry, ...)
+    if entry.storageFormat ~= "single" then return end
+    local balance = num(r.file.loadFile().entries[entry.key])
+    for _, c in ipairs({ ... }) do
+      if balance > c.peak then c.peak = balance end
+    end
+  end
+
+  local function recordAction(id, key, action, amount)
+    local field = ACTION_FIELD[action]
+    if field == nil then return false, "unknown action" end
+    local r, entry = entryOf(id, key)
+    if not entry then return false, "unknown entry" end
+    local g, s = counters(r, entry)
+    amount = num(amount, 1)
+    for _, c in ipairs({ g, s }) do
+      c.transactions = c.transactions + 1
+      if not field then
+      elseif QTY_FORMATS[entry.storageFormat] then
+        c[field] = (c[field] or 0) + 1
+        c[field .. "Qty"] = (c[field .. "Qty"] or 0) + amount
+      else c[field] = (c[field] or 0) + amount end
+    end
+    raisePeak(r, entry, g, s)
+    r.statsFile.markDirty()
+    return true
+  end
+
+  local function recordCustomStorageAction(id, key, action, amount)
+    if id == mod.id then return false, "unknown entry" end
+    return CustomStorage.reportAction(id, key, action, amount)
+  end
+
+  mod.events:on("mod.vrm_pokemon_bank.storage_action", function(ev)
+    if type(ev) == "table" then recordAction(ev.id, ev.key, ev.action, ev.amount) end
+  end)
+
+  mod.events:on("mod.vrm_pokemon_bank.link_completed", function(ev)
+    local g, s = loadGlobal(), saveStats()
+    g.linkSessions.completed = g.linkSessions.completed + 1
+    s.linkSessions.completed = s.linkSessions.completed + 1
+    stats.markDirty()
+    local moved = {}
+    local entries = ev and type(ev.entries) == "table" and ev.entries or {}
+    for side, field in pairs({ sent = "sent", received = "received" }) do
+      for id, keys in pairs(type(entries[side]) == "table" and entries[side] or {}) do
+        for key, c in pairs(type(keys) == "table" and keys or {}) do
+          local r, entry = entryOf(id, key)
+          local count, qty = num(type(c) == "table" and c.count), num(type(c) == "table" and c.qty)
+          if entry and (count > 0 or qty > 0) then
+            local cg, cs = counters(r, entry)
+            for _, t in ipairs({ cg, cs }) do
+              t[field] = t[field] + count
+              if QTY_FORMATS[entry.storageFormat] then t[field .. "Qty"] = t[field .. "Qty"] + qty end
+            end
+            moved[r.id .. "\0" .. key] = { r = r, entry = entry, g = cg, s = cs }
+          end
+        end
+      end
+    end
+    for _, m in pairs(moved) do
+      m.g.links, m.s.links = m.g.links + 1, m.s.links + 1
+      raisePeak(m.r, m.entry, m.g, m.s)
+      m.r.statsFile.markDirty()
+    end
+  end)
+
+  mod.events:on("mod.vrm_pokemon_bank.link_cancelled", function()
+    local g, s = loadGlobal(), saveStats()
+    g.linkSessions.cancelled = g.linkSessions.cancelled + 1
+    s.linkSessions.cancelled = s.linkSessions.cancelled + 1
+    stats.markDirty()
+  end)
+
+  local function getEntryStats(id, key)
+    local r, entry = entryOf(id, key)
+    if not entry then return nil end
+    local g, s = counters(r, entry)
+    return { bank = deepCopy(g), player = deepCopy(s) }
+  end
+
+  local function publishedStats(global)
+    local function c(key)
+      local r, entry = entryOf(mod.id, key)
+      local g, s = counters(r, entry)
+      return global and g or s
+    end
+    local boxes, items, moves, money = c("boxes"), c("items"), c("moves"), c("money")
+    local sessions = global and loadGlobal().linkSessions or saveStats().linkSessions
+    local total = sessions.completed
+    for _, entry in ipairs(record.entries) do total = total + c(entry.key).transactions end
+    local scope = global and "bank" or "player"
+    local taught = num(getOwnStats(mod.id, "moves", scope).taught)
+    local out = {
+      transactions = total,
+      pokemon = { deposited = boxes.deposited, withdrawn = boxes.withdrawn, released = boxes.removed or 0 },
+      items = {
+        depositedOps = items.deposited, depositedQty = items.depositedQty, withdrawnOps = items.withdrawn,
+        withdrawnQty = items.withdrawnQty, tossedOps = items.removed or 0, tossedQty = items.removedQty or 0,
+      },
+      moves = {
+        depositedOps = moves.deposited, depositedQty = moves.depositedQty, withdrawnOps = moves.withdrawn,
+        withdrawnQty = moves.withdrawnQty, taught = taught,
+      },
+      money = {
+        depositedOps = money.deposited, depositedTotal = money.depositedQty, withdrawnOps = money.withdrawn,
+        withdrawnTotal = money.withdrawnQty,
+      },
+      link = {
+        completed = sessions.completed, cancelled = sessions.cancelled,
+        sent = { pokemon = boxes.sent, items = items.sentQty, moves = moves.sentQty, money = money.sentQty },
+        received = { pokemon = boxes.received, items = items.receivedQty, moves = moves.receivedQty, money = money.receivedQty },
+      },
+    }
+    if global then
+      out.peakMoney = money.peak
+      out.species = deepCopy(getOwnStats(mod.id, "boxes", "bank").species)
+    end
+    return out
+  end
 
   local function appendRow(rows, label, value, description) rows[#rows + 1] = { label = label, right = tostring(value), description = description } end
 
-  local function appendPokemonRows(rows, pokemon)
-    appendRow(rows, "<PK><MN> IN", pokemon.deposited, "Deposited count.")
-    appendRow(rows, "<PK><MN> OUT", pokemon.withdrawn, "Withdrawn count.")
-    appendRow(rows, "<PK><MN> REL", pokemon.released, "Released count.")
-  end
-
-  local function appendItemRows(rows, items)
-    appendRow(rows, "ITEM IN", items.depositedQty, "Items deposited.")
-    appendRow(rows, "ITEM OUT", items.withdrawnQty, "Items withdrawn.")
-    appendRow(rows, "ITEM TOSS", items.tossedQty, "Items tossed.")
-  end
-
-  local function appendMoveRows(rows, moves)
-    appendRow(rows, "MOVE IN", moves.depositedQty, "Moves deposited.")
-    appendRow(rows, "MOVE OUT", moves.withdrawnQty, "Moves withdrawn.")
-    appendRow(rows, "TAUGHT", moves.taught, "Moves taught.")
-  end
-
-  local function appendMoneyRows(rows, money)
-    appendRow(rows, "¥ IN", fmtMoney(money.depositedTotal), "Money deposited.")
-    appendRow(rows, "¥ OUT", fmtMoney(money.withdrawnTotal), "Money withdrawn.")
-  end
-
-  local function appendLinkRows(rows, link)
-    appendRow(rows, "LINK OK", link.completed, "Completed LINKs.")
-    appendRow(rows, "LINK CANCEL", link.cancelled, "Cancelled LINKs.")
-    appendRow(rows, "SENT <PK><MN>", link.sent.pokemon, "POKéMON sent.")
-    appendRow(rows, "SENT ITEM", link.sent.items, "Items sent.")
-    appendRow(rows, "SENT MOVE", link.sent.moves, "Moves sent.")
-    appendRow(rows, "SENT ¥", fmtMoney(link.sent.money), "Money sent.")
-    appendRow(rows, "RECV <PK><MN>", link.received.pokemon, "POKéMON received.")
-    appendRow(rows, "RECV ITEM", link.received.items, "Items received.")
-    appendRow(rows, "RECV MOVE", link.received.moves, "Moves received.")
-    appendRow(rows, "RECV ¥", fmtMoney(link.received.money), "Money received.")
-  end
-
-  local function globalRows(game)
-    local g = stats.loadFile()
-    local rows = {}
-    appendRow(rows, "ACTIONS", g.transactions, "Total actions.")
-    appendPokemonRows(rows, g.pokemon)
-    appendItemRows(rows, g.items)
-    appendMoveRows(rows, g.moves)
-    appendMoneyRows(rows, g.money)
-    appendRow(rows, "¥ PEAK", fmtMoney(g.peakMoney), "Highest balance.")
-    appendLinkRows(rows, g.link)
-    local topId, topCount = topSpecies()
-    if topId then
-      local def = game and game.data and game.data.pokemon and game.data.pokemon[topId]
-      local name = (def and def.name) or topId
-      appendRow(rows, "TOP " .. name, topCount, "Most deposited.")
+  local function appendBasicRows(rows, entry, c)
+    local qty = QTY_FORMATS[entry.storageFormat]
+    local single = entry.storageFormat == "single"
+    local prefix = single and type(entry.link) == "table" and type(entry.link.prefix) == "string" and entry.link.prefix or ""
+    local function amount(n) return prefix .. n end
+    appendRow(rows, "ACTIONS", c.transactions, "Bank actions.")
+    appendRow(rows, "DEPOSITED", c.deposited, "Deposits made.")
+    if qty then appendRow(rows, "DEP. QTY", amount(c.depositedQty), "Amount deposited.") end
+    appendRow(rows, "WITHDRAWN", c.withdrawn, "Withdrawals made.")
+    if qty then appendRow(rows, "WDR. QTY", amount(c.withdrawnQty), "Amount withdrawn.") end
+    if (c.removed or 0) > 0 then appendRow(rows, "REMOVED", c.removed, "Removals made.") end
+    if qty and (c.removedQty or 0) > 0 then appendRow(rows, "REM. QTY", amount(c.removedQty), "Amount removed.") end
+    if entry.linkEnabled ~= false then
+      appendRow(rows, "LINKS", c.links, "LINK trades.")
+      appendRow(rows, "SENT", c.sent, "Sent by LINK.")
+      if qty then appendRow(rows, "SENT QTY", amount(c.sentQty), "Amount sent.") end
+      appendRow(rows, "RECEIVED", c.received, "Received by LINK.")
+      if qty then appendRow(rows, "RECV QTY", amount(c.receivedQty), "Amount received.") end
     end
-    return rows
+    if single then appendRow(rows, "PEAK", amount(c.peak), "Highest balance.") end
   end
 
-  local function saveRows()
-    local s = saveCounters()
-    local rows = {}
-    appendRow(rows, "ACTIONS", s.transactions, "Total actions.")
-    appendPokemonRows(rows, s.pokemon)
-    appendItemRows(rows, s.items)
-    appendMoveRows(rows, s.moves)
-    appendMoneyRows(rows, s.money)
-    appendLinkRows(rows, s.link)
-    return rows
+  local function appendEntryRows(rows, game, page, scope)
+    if type(page.entry.stats) ~= "table" then return end
+    local statsValue = ownOf(page.record, page.entry, scope)
+    for _, row in ipairs(page.entry.stats) do
+      local value, label = CustomStorage.safeCall(row.value, game, statsValue)
+      if value ~= nil then appendRow(rows, type(label) == "string" and label or row.label, value, row.description) end
+    end
+  end
+
+  local function statsPages()
+    local out = {}
+    for _, r in ipairs(CustomStorage.listCustomStorages()) do
+      for _, entry in ipairs(r.entries) do
+        out[#out + 1] = { label = #r.entries == 1 and r.name:upper() or entry.label, record = r, entry = entry }
+      end
+    end
+    return out
   end
 
   local function buildStatsScreen(game)
-    local group = core.listGroup(game, {
+    local pages = statsPages()
+    local pageIndex = 1
+    local function page() return pages[pageIndex] end
+    local scopeLabel = { global = "BANK", save = "PLAYER" }
+
+    local group
+    local function flipPage(delta)
+      pageIndex = ((pageIndex - 1 + delta) % #pages) + 1
+      group.rebuild()
+    end
+
+    group = core.listGroup(game, {
       screenId = SCREEN_ID,
       readOnly = true,
       counter = true,
       views = { "global", "save" },
-      title = function(view) return view == "global" and "BANK STATS" or "PLAYER STATS" end,
-      label = function(view) return view == "global" and "BANK" or "PLAYER" end,
+      title = function(view) return core.truncateName(scopeLabel[view] .. " " .. page().label, 16) end,
+      label = function(view) return scopeLabel[view] end,
       dynamicFooter = function(view, item, nextLabel)
         local description = item and item.description or ""
-        local selectLine = nextLabel and ("SELECT: " .. nextLabel) or ""
-        return description .. "\n" .. selectLine
+        return description .. "\n" .. (nextLabel and ("SELECT: " .. nextLabel) or "")
       end,
       build = function(view)
-        local rows = view == "global" and globalRows(game) or saveRows()
+        local rows = {}
+        local global = view == "global"
+        local g, s = counters(page().record, page().entry)
+        appendBasicRows(rows, page().entry, global and g or s)
+        appendEntryRows(rows, game, page(), global and "bank" or "player")
         return rows, { rows = 6, noSound = true, wrap = true }
       end,
+      extraKeys = function(input)
+        if input:wasPressed("left") then flipPage(-1) return true end
+        if input:wasPressed("right") then flipPage(1) return true end
+        return false
+      end,
+      modernUi = { left = function() flipPage(-1) end, right = function() flipPage(1) end },
     })
     return group.screen
   end
 
   mod.content.screens:register(SCREEN_ID, { new = buildStatsScreen })
-  mod.exports.getBankStats = function() return getGlobalStats() end
-  mod.exports.getSaveStats = function() return getSaveStats() end
+  mod.exports.getBankStats = function() return publishedStats(true) end
+  mod.exports.getSaveStats = function() return publishedStats(false) end
+  mod.exports.getEntryStats = getEntryStats
   mod.exports.statsScreenId = SCREEN_ID
+  mod.exports.recordCustomStorageAction = recordCustomStorageAction
+  mod.exports.getCustomStorageStats = getOwnStats
+  mod.exports.setCustomStorageStats = setOwnStats
+  mod.exports.updateCustomStorageStats = updateOwnStats
   Stats.markDirty = stats.markDirty
-  Stats.isDirty = stats.isDirty
-  Stats.loadStats = stats.loadFile
-  Stats.flushStats = stats.flushFile
-  Stats.replaceStats = stats.replaceFile
-  Stats.resetStats = stats.resetFile
-  Stats.readBackup = stats.readFileBackup
-  Stats.deleteStats = stats.deleteFile
   mod.log:info("Pokemon Bank: Stats ready")
   return Stats
 end
