@@ -1,9 +1,5 @@
 # Changelog
 
-## Unreleased
-
-New export: `markDirty()`, to save a Pokémon another mod edited in place.
-
 ## 3.0.0
 
 **Added Gen 3 support**: Every stored Pokémon gets a personality value (PID), and a Secret ID; the trainer gets an SID when the save has none. A Pokémon's stats are calculated again when it crosses between Gen 1/2 and Gen 3. IVs and DVs, and EVs and Stat Exp, convert into each other when a Pokémon crosses between Gen 1/2 and Gen 3.
